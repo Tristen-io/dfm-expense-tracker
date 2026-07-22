@@ -12,9 +12,14 @@ function parseUTCDate(isoDate: string) {
   return new Date(`${isoDate}T00:00:00Z`);
 }
 
+// Only entries with a known amount are counted toward dollar totals — an
+// "awaiting price" order (amount === null) has nothing to add yet. Use
+// awaitingPriceCount() to surface how many are excluded so they don't get
+// forgotten.
 function groupBy(expenses: Expense[], keyFn: (e: Expense) => { key: string; label: string }) {
   const map = new Map<string, TotalRow>();
   for (const e of expenses) {
+    if (e.amount === null) continue;
     const { key, label } = keyFn(e);
     const existing = map.get(key);
     if (existing) {
@@ -57,5 +62,9 @@ export function totalsByJob(expenses: Expense[]): TotalRow[] {
 }
 
 export function grandTotal(expenses: Expense[]): number {
-  return expenses.reduce((sum, e) => sum + e.amount, 0);
+  return expenses.reduce((sum, e) => sum + (e.amount ?? 0), 0);
+}
+
+export function awaitingPriceCount(expenses: Expense[]): number {
+  return expenses.filter((e) => e.amount === null).length;
 }

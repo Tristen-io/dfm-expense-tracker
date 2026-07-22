@@ -88,6 +88,7 @@ export default function FiltersBar({
           <option value="pending">Pending</option>
           <option value="approved">Approved</option>
           <option value="flagged">Flagged</option>
+          <option value="awaiting_price">Awaiting price</option>
         </select>
       </div>
 

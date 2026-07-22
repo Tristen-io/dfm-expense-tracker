@@ -3,7 +3,13 @@
 import { useRef, useState, useTransition } from "react";
 import { createExpense } from "@/lib/actions/expenses";
 import { createClient } from "@/lib/supabase/client";
-import { EXPENSE_CATEGORIES } from "@/lib/types";
+import {
+  EXPENSE_CATEGORIES,
+  MATERIAL_TYPES,
+  MATERIAL_UNITS,
+  type ExpenseCategory,
+  type MaterialType,
+} from "@/lib/types";
 
 function todayLocalISODate() {
   const now = new Date();
@@ -18,8 +24,14 @@ export default function ExpenseForm() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [receiptPath, setReceiptPath] = useState<string>("");
   const [receiptFileName, setReceiptFileName] = useState<string>("");
+  const [category, setCategory] = useState<ExpenseCategory | "">("");
+  const [materialType, setMaterialType] = useState<MaterialType | "">("");
+  const [customUnit, setCustomUnit] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isMaterial = category === "Material";
+  const fixedUnit = materialType && materialType !== "Other" ? MATERIAL_UNITS[materialType] : "";
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -78,6 +90,9 @@ export default function ExpenseForm() {
       }
       formRef.current?.reset();
       clearReceipt();
+      setCategory("");
+      setMaterialType("");
+      setCustomUnit("");
     });
   }
 
@@ -109,10 +124,13 @@ export default function ExpenseForm() {
             inputMode="decimal"
             step="0.01"
             min="0.01"
-            required
-            placeholder="0.00"
+            placeholder="Leave blank if not known yet"
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
+          <p className="mt-1 text-xs text-slate-500">
+            Ordering material and don&apos;t know the price yet? Leave this blank — you (or an
+            admin) can add it once the invoice or ticket comes in.
+          </p>
         </div>
       </div>
 
@@ -138,7 +156,15 @@ export default function ExpenseForm() {
           id="category"
           name="category"
           required
-          defaultValue=""
+          value={category}
+          onChange={(e) => {
+            const next = e.target.value as ExpenseCategory | "";
+            setCategory(next);
+            if (next !== "Material") {
+              setMaterialType("");
+              setCustomUnit("");
+            }
+          }}
           className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
         >
           <option value="" disabled>
@@ -151,6 +177,99 @@ export default function ExpenseForm() {
           ))}
         </select>
       </div>
+
+      {isMaterial && (
+        <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div>
+            <label htmlFor="material_type" className="block text-sm font-medium text-slate-700">
+              Material type
+            </label>
+            <select
+              id="material_type"
+              name="material_type"
+              required={isMaterial}
+              value={materialType}
+              onChange={(e) => {
+                const next = e.target.value as MaterialType | "";
+                setMaterialType(next);
+                setCustomUnit("");
+              }}
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+            >
+              <option value="" disabled>
+                Select material…
+              </option>
+              {MATERIAL_TYPES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {materialType && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="quantity" className="block text-sm font-medium text-slate-700">
+                  Quantity
+                </label>
+                <input
+                  id="quantity"
+                  name="quantity"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="0"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="quantity_unit" className="block text-sm font-medium text-slate-700">
+                  Unit
+                </label>
+                {materialType === "Other" ? (
+                  <input
+                    id="quantity_unit"
+                    name="quantity_unit"
+                    type="text"
+                    required
+                    value={customUnit}
+                    onChange={(e) => setCustomUnit(e.target.value)}
+                    placeholder="e.g. loads, bags"
+                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                  />
+                ) : (
+                  <input
+                    id="quantity_unit"
+                    name="quantity_unit"
+                    type="text"
+                    readOnly
+                    value={fixedUnit}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-slate-100 px-3 py-2.5 text-base text-slate-600"
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {materialType === "Concrete" && (
+            <div>
+              <label htmlFor="mix_design" className="block text-sm font-medium text-slate-700">
+                Mix design
+              </label>
+              <input
+                id="mix_design"
+                name="mix_design"
+                type="text"
+                placeholder="e.g. 4000 PSI, air-entrained"
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <label htmlFor="notes" className="block text-sm font-medium text-slate-700">

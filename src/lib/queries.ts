@@ -13,7 +13,13 @@ export function filteredExpensesQuery(
   if (filters.employee) query = query.eq("user_id", filters.employee);
   if (filters.job) query = query.ilike("job_name", `%${filters.job}%`);
   if (filters.category) query = query.eq("category", filters.category as ExpenseCategory);
-  if (filters.status) query = query.eq("status", filters.status as ExpenseStatus);
+  // "awaiting_price" is a synthetic filter value (not a real status column
+  // value) — it means "amount hasn't been entered yet."
+  if (filters.status === "awaiting_price") {
+    query = query.is("amount", null);
+  } else if (filters.status) {
+    query = query.eq("status", filters.status as ExpenseStatus);
+  }
   if (filters.from) query = query.gte("expense_date", filters.from);
   if (filters.to) query = query.lte("expense_date", filters.to);
 

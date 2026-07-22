@@ -28,6 +28,21 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 
 export type ExpenseStatus = "pending" | "approved" | "flagged";
 
+// Only meaningful when category === "Material". Picking one of the first
+// three auto-fills quantity_unit and, for Concrete, reveals the mix design
+// field; "Other" leaves quantity_unit as free text.
+export type MaterialType = "Concrete" | "Asphalt" | "Base Course" | "Other";
+
+export const MATERIAL_TYPES: MaterialType[] = ["Concrete", "Asphalt", "Base Course", "Other"];
+
+// Fixed unit per material type, used to auto-fill quantity_unit in the form.
+// "Other" has no fixed unit — the user types their own.
+export const MATERIAL_UNITS: Record<Exclude<MaterialType, "Other">, string> = {
+  Concrete: "cubic yards",
+  Asphalt: "tons",
+  "Base Course": "tons",
+};
+
 export type Profile = {
   id: string;
   full_name: string;
@@ -40,9 +55,16 @@ export type Expense = {
   user_id: string;
   employee_name: string;
   expense_date: string; // YYYY-MM-DD
-  amount: number;
+  // Null while an order is placed but the price isn't known yet ("awaiting
+  // price" — derived from amount === null, not a separate status value).
+  // The DB forbids status = 'approved' while amount is null.
+  amount: number | null;
   job_name: string;
   category: ExpenseCategory;
+  material_type: MaterialType | null;
+  quantity: number | null;
+  quantity_unit: string | null;
+  mix_design: string | null;
   notes: string | null;
   receipt_path: string | null;
   status: ExpenseStatus;
@@ -61,9 +83,13 @@ export type ExpenseInsert = {
   user_id: string;
   employee_name: string;
   expense_date: string;
-  amount: number;
+  amount?: number | null;
   job_name: string;
   category: ExpenseCategory;
+  material_type?: MaterialType | null;
+  quantity?: number | null;
+  quantity_unit?: string | null;
+  mix_design?: string | null;
   notes?: string | null;
   receipt_path?: string | null;
   status?: ExpenseStatus;

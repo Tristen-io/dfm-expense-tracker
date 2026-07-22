@@ -33,6 +33,17 @@ this size unless Supabase or Vercel change their free-tier terms.
 - **Submission form** (`/submit`) — date, amount, job/project, category
   (General purchase / Material / Supplies / Fuel / Other), notes, optional
   receipt photo. Mobile-friendly, uses the phone camera when available.
+  Picking "Material" reveals a material type (Concrete / Asphalt / Base
+  Course / Other), a quantity + unit, and — for Concrete — a mix design
+  field. The dollar amount is optional at submission time: material orders
+  are often placed before the price is known, so amount can be left blank
+  and filled in later (see "Awaiting price" below).
+- **Awaiting price** — any entry submitted with no amount shows an "Awaiting
+  price" badge instead of a dollar figure. Either the employee who submitted
+  it (while still pending) or an admin can go back and add the amount once
+  the invoice or delivery ticket arrives. An entry can't be approved (or
+  exported) until it has an amount — enforced both in the UI and as a
+  database constraint.
 - **My entries** (`/my-entries`) — an employee's own submissions and their
   review status. Entries can be edited/deleted only while still "pending."
 - **Admin — All entries** (`/admin/entries`) — every submission, filterable
@@ -128,6 +139,21 @@ src/
 supabase/
   schema.sql                  — the entire database schema, RLS policies, and storage bucket setup
 ```
+
+## Updating an already-deployed project
+
+When you get an updated copy of this project (a new zip, or new files to
+upload to GitHub), two things need to happen, in this order:
+
+1. **Re-run `supabase/schema.sql`** in the Supabase SQL Editor. The whole
+   file is written to be safe to re-run any time — it only adds/updates what
+   changed, it won't touch or duplicate your existing data.
+2. **Push the updated code** — upload the new files to GitHub the same way
+   you did the first time (uploading a file with the same path as an
+   existing one just updates it). Vercel redeploys automatically on push.
+
+Do the database step first — if the code deploys before the matching
+database columns exist, you'll see errors until both are in sync.
 
 ## Extending it later
 

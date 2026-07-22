@@ -62,16 +62,62 @@ create table if not exists public.expenses (
   user_id uuid not null references public.profiles(id) on delete cascade,
   employee_name text not null,
   expense_date date not null,
-  amount numeric(10, 2) not null check (amount > 0),
+  amount numeric(10, 2),
   job_name text not null,
-  category text not null check (
-    category in ('General purchase', 'Material', 'Supplies', 'Fuel', 'Other')
-  ),
+  category text not null,
   notes text,
   receipt_path text,
-  status text not null default 'pending' check (status in ('pending', 'approved', 'flagged')),
+  status text not null default 'pending',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+-- Columns added after the initial release. These are no-ops on a fresh
+-- install (the create table above already has them by the time this file
+-- finishes running once) and are what actually updates a database that
+-- already ran an earlier version of this file — that's why this whole file
+-- stays safe to re-run any time it changes.
+alter table public.expenses add column if not exists material_type text;
+alter table public.expenses add column if not exists quantity numeric(10, 2);
+alter table public.expenses add column if not exists quantity_unit text;
+alter table public.expenses add column if not exists mix_design text;
+
+-- Amount is nullable: a material order can be logged (with quantity/mix
+-- design) before the price is known, then confirmed later once the invoice
+-- or delivery ticket comes in. See the "expenses_approved_needs_amount"
+-- constraint below for the safety net this implies.
+alter table public.expenses alter column amount drop not null;
+
+-- Named, re-creatable constraints (so this file stays re-runnable even when
+-- a constraint's definition changes between versions).
+alter table public.expenses drop constraint if exists expenses_amount_check;
+alter table public.expenses add constraint expenses_amount_check
+  check (amount is null or amount > 0);
+
+alter table public.expenses drop constraint if exists expenses_category_check;
+alter table public.expenses add constraint expenses_category_check check (
+  category in ('General purchase', 'Material', 'Supplies', 'Fuel', 'Other')
+);
+
+-- material_type only applies when category = 'Material'; the app enforces
+-- that pairing, this just constrains the value itself.
+alter table public.expenses drop constraint if exists expenses_material_type_check;
+alter table public.expenses add constraint expenses_material_type_check check (
+  material_type is null or material_type in ('Concrete', 'Asphalt', 'Base Course', 'Other')
+);
+
+alter table public.expenses drop constraint if exists expenses_status_check;
+alter table public.expenses add constraint expenses_status_check check (
+  status in ('pending', 'approved', 'flagged')
+);
+
+-- Belt-and-suspenders: the app's UI already disables the Approve button
+-- until an amount is entered, but this closes the gap at the database level
+-- too, so an "awaiting price" order can never end up approved/exported with
+-- no dollar value.
+alter table public.expenses drop constraint if exists expenses_approved_needs_amount_check;
+alter table public.expenses add constraint expenses_approved_needs_amount_check check (
+  status <> 'approved' or amount is not null
 );
 
 create index if not exists expenses_user_id_idx on public.expenses (user_id);

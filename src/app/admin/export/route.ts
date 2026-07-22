@@ -29,7 +29,13 @@ export async function GET(request: NextRequest) {
     Employee: e.employee_name,
     "Job/Project": e.job_name,
     Category: e.category,
-    Amount: e.amount.toFixed(2),
+    "Material Type": e.material_type ?? "",
+    Quantity: e.quantity ?? "",
+    Unit: e.quantity_unit ?? "",
+    "Mix Design": e.mix_design ?? "",
+    // Approved entries always have an amount (DB constraint forbids
+    // approving an "awaiting price" order), but guard defensively anyway.
+    Amount: e.amount !== null ? e.amount.toFixed(2) : "",
     Notes: e.notes ?? "",
     Status: e.status,
     "Has Receipt": e.receipt_path ? "Yes" : "No",
