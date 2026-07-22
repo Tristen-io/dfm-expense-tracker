@@ -25,6 +25,9 @@ export default function Navbar({ profile }: { profile: Profile }) {
                 <Link href="/admin/reports" className="text-slate-600 hover:text-slate-900">
                   Reports
                 </Link>
+                <Link href="/admin/vendors" className="text-slate-600 hover:text-slate-900">
+                  Vendors
+                </Link>
               </>
             )}
           </nav>

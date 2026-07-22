@@ -30,14 +30,20 @@ this size unless Supabase or Vercel change their free-tier terms.
 
 ## What's built
 
-- **Submission form** (`/submit`) — date, amount, job/project, category
-  (General purchase / Material / Supplies / Fuel / Other), notes, optional
-  receipt photo. Mobile-friendly, uses the phone camera when available.
-  Picking "Material" reveals a material type (Concrete / Asphalt / Base
-  Course / Other), a quantity + unit, and — for Concrete — a mix design
+- **Submission form** (`/submit`) — date, amount, job/project, vendor,
+  category (General purchase / Material / Supplies / Fuel / Other), notes,
+  optional receipt photo. Mobile-friendly, uses the phone camera when
+  available. Picking "Material" reveals a material type (Concrete / Asphalt /
+  Base Course / Other), a quantity + unit, and — for Concrete — a mix design
   field. The dollar amount is optional at submission time: material orders
   are often placed before the price is known, so amount can be left blank
   and filled in later (see "Awaiting price" below).
+- **Vendor** — a free-text field on every entry (who it was purchased from),
+  with autocomplete suggestions drawn from an admin-managed list of common
+  vendors. Employees can still type any vendor name that isn't on the list —
+  it's never blocked, just suggested. Admins manage the curated list at
+  `/admin/vendors` (add or remove common vendors), and vendor spend rolls up
+  in Reports and can be filtered on in All entries.
 - **Awaiting price** — any entry submitted with no amount shows an "Awaiting
   price" badge instead of a dollar figure. Either the employee who submitted
   it (while still pending) or an admin can go back and add the amount once
@@ -47,12 +53,15 @@ this size unless Supabase or Vercel change their free-tier terms.
 - **My entries** (`/my-entries`) — an employee's own submissions and their
   review status. Entries can be edited/deleted only while still "pending."
 - **Admin — All entries** (`/admin/entries`) — every submission, filterable
-  by employee, job, category, status, and date range. Approve, flag, or
-  reset any entry.
-- **Admin — Reports** (`/admin/reports`) — totals by day, week, month, and
-  job/project for a selected date range and status.
+  by employee, job, vendor, category, status, and date range. Approve, flag,
+  or reset any entry.
+- **Admin — Vendors** (`/admin/vendors`) — add or remove the common vendors
+  that show up as autocomplete suggestions on the submission form and
+  drive the "By vendor" report.
+- **Admin — Reports** (`/admin/reports`) — totals by day, week, month,
+  job/project, and vendor for a selected date range and status.
 - **CSV export** (`/admin/export`) — exports approved entries (respecting
-  the current filters) as a CSV for accounting/payroll.
+  the current filters), including the vendor, as a CSV for accounting/payroll.
 - **Auth** — Supabase email/password. New signups start as "employee";
   promote an account to "admin" directly in Supabase (see below). Route
   access is enforced both in `proxy.ts` (Next.js's replacement for
@@ -125,16 +134,17 @@ src/
     my-entries/              — employee's own entries
     admin/
       entries/                — all entries + filters + approve/flag
-      reports/                 — totals by day/week/month/job
+      vendors/                 — admin-managed list of common vendors
+      reports/                 — totals by day/week/month/job/vendor
       export/route.ts          — CSV export (GET, streams a download)
     page.tsx                  — redirects to /submit or /admin/entries by role
   components/                 — ExpenseForm, EntriesTable, FiltersBar, etc.
   lib/
-    actions/                  — Server Actions (auth, expenses, receipts)
+    actions/                  — Server Actions (auth, expenses, receipts, vendors)
     supabase/                 — browser + server Supabase clients
     types.ts                  — shared domain types + the Database schema type
     queries.ts                — shared filtered-query builder (entries + export use the same logic)
-    reportUtils.ts             — day/week/month/job aggregation
+    reportUtils.ts             — day/week/month/job/vendor aggregation
   proxy.ts                    — route protection + session refresh (Next.js 16's renamed "middleware")
 supabase/
   schema.sql                  — the entire database schema, RLS policies, and storage bucket setup
@@ -166,6 +176,9 @@ database columns exist, you'll see errors until both are in sync.
   `src/lib/queries.ts`.
 - **Per-job budgets, mileage, etc.**: add columns to the `expenses` table
   (or a related table) and extend `ExpenseForm.tsx` / the admin views.
+- **Vendor detail (address, contact, account #)**: the `vendors` table
+  currently only has a `name`. Add columns there and surface them on
+  `/admin/vendors`.
 
 ## A note on the versions used
 

@@ -50,6 +50,16 @@ export type Profile = {
   created_at: string;
 };
 
+// Admin-curated list, shown as autocomplete suggestions on the expense form
+// and used to group "spend by vendor" in Reports. expenses.vendor is a free
+// text column, NOT a foreign key to this table — an employee can still type
+// a one-off vendor name that isn't on the curated list.
+export type Vendor = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
 export type Expense = {
   id: string;
   user_id: string;
@@ -65,6 +75,7 @@ export type Expense = {
   quantity: number | null;
   quantity_unit: string | null;
   mix_design: string | null;
+  vendor: string | null;
   notes: string | null;
   receipt_path: string | null;
   status: ExpenseStatus;
@@ -79,6 +90,12 @@ export type ProfileInsert = {
   created_at?: string;
 };
 
+export type VendorInsert = {
+  name: string;
+  id?: string;
+  created_at?: string;
+};
+
 export type ExpenseInsert = {
   user_id: string;
   employee_name: string;
@@ -90,6 +107,7 @@ export type ExpenseInsert = {
   quantity?: number | null;
   quantity_unit?: string | null;
   mix_design?: string | null;
+  vendor?: string | null;
   notes?: string | null;
   receipt_path?: string | null;
   status?: ExpenseStatus;
@@ -105,6 +123,12 @@ export type Database = {
         Row: Profile;
         Insert: ProfileInsert;
         Update: Partial<Profile>;
+        Relationships: [];
+      };
+      vendors: {
+        Row: Vendor;
+        Insert: VendorInsert;
+        Update: Partial<Vendor>;
         Relationships: [];
       };
       expenses: {

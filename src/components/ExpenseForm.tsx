@@ -9,6 +9,7 @@ import {
   MATERIAL_UNITS,
   type ExpenseCategory,
   type MaterialType,
+  type Vendor,
 } from "@/lib/types";
 
 function todayLocalISODate() {
@@ -17,7 +18,7 @@ function todayLocalISODate() {
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
 }
 
-export default function ExpenseForm() {
+export default function ExpenseForm({ vendors }: { vendors: Vendor[] }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [uploading, setUploading] = useState(false);
@@ -146,6 +147,25 @@ export default function ExpenseForm() {
           placeholder="e.g. 4th & Main driveway pour"
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
         />
+      </div>
+
+      <div>
+        <label htmlFor="vendor" className="block text-sm font-medium text-slate-700">
+          Vendor
+        </label>
+        <input
+          id="vendor"
+          name="vendor"
+          type="text"
+          list="vendor-suggestions"
+          placeholder="e.g. ABC Concrete Supply"
+          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+        />
+        <datalist id="vendor-suggestions">
+          {vendors.map((v) => (
+            <option key={v.id} value={v.name} />
+          ))}
+        </datalist>
       </div>
 
       <div>
@@ -279,7 +299,7 @@ export default function ExpenseForm() {
           id="notes"
           name="notes"
           rows={3}
-          placeholder="Optional details — vendor, purpose, etc."
+          placeholder="Optional details — purpose, PO number, etc."
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
         />
       </div>

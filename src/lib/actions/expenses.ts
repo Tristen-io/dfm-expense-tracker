@@ -51,6 +51,7 @@ export async function createExpense(
   const quantityRaw = String(formData.get("quantity") || "").trim();
   const quantity_unit = String(formData.get("quantity_unit") || "").trim();
   const mix_design = String(formData.get("mix_design") || "").trim();
+  const vendor = String(formData.get("vendor") || "").trim();
 
   if (!expense_date) return { error: "Date is required." };
 
@@ -99,6 +100,7 @@ export async function createExpense(
     quantity,
     quantity_unit: material_type ? quantity_unit : null,
     mix_design: material_type ? mix_design || null : null,
+    vendor: vendor || null,
     notes: notes || null,
     receipt_path,
   });

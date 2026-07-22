@@ -55,6 +55,18 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- ============================================================
+-- VENDORS  (admin-curated list, used as suggestions on the expense form and
+-- as the grouping key for "spend by vendor" in Reports)
+-- ============================================================
+create table if not exists public.vendors (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists vendors_name_idx on public.vendors (name);
+
+-- ============================================================
 -- EXPENSES
 -- ============================================================
 create table if not exists public.expenses (
@@ -81,6 +93,10 @@ alter table public.expenses add column if not exists material_type text;
 alter table public.expenses add column if not exists quantity numeric(10, 2);
 alter table public.expenses add column if not exists quantity_unit text;
 alter table public.expenses add column if not exists mix_design text;
+-- Free text, not a foreign key to vendors — admins curate the vendors table
+-- as suggestions for consistent reporting, but an employee can still type a
+-- one-off vendor name that isn't on the list without being blocked.
+alter table public.expenses add column if not exists vendor text;
 
 -- Amount is nullable: a material order can be logged (with quantity/mix
 -- design) before the price is known, then confirmed later once the invoice
@@ -125,6 +141,7 @@ create index if not exists expenses_date_idx on public.expenses (expense_date);
 create index if not exists expenses_job_idx on public.expenses (job_name);
 create index if not exists expenses_status_idx on public.expenses (status);
 create index if not exists expenses_category_idx on public.expenses (category);
+create index if not exists expenses_vendor_idx on public.expenses (vendor);
 
 create or replace function public.set_updated_at()
 returns trigger
@@ -146,6 +163,7 @@ create trigger expenses_set_updated_at
 -- ============================================================
 alter table public.profiles enable row level security;
 alter table public.expenses enable row level security;
+alter table public.vendors enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
@@ -176,6 +194,20 @@ create policy "expenses_delete_own_pending_or_admin" on public.expenses
   for delete using (
     (user_id = auth.uid() and status = 'pending') or public.is_admin()
   );
+
+-- Anyone signed in can read the vendor list (it's just suggestions shown on
+-- the expense form); only admins can add or remove entries.
+drop policy if exists "vendors_select_authenticated" on public.vendors;
+create policy "vendors_select_authenticated" on public.vendors
+  for select using (auth.uid() is not null);
+
+drop policy if exists "vendors_insert_admin" on public.vendors;
+create policy "vendors_insert_admin" on public.vendors
+  for insert with check (public.is_admin());
+
+drop policy if exists "vendors_delete_admin" on public.vendors;
+create policy "vendors_delete_admin" on public.vendors
+  for delete using (public.is_admin());
 
 -- ============================================================
 -- STORAGE — private "receipts" bucket, one folder per user (folder name = user id)

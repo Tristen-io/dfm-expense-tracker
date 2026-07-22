@@ -8,6 +8,7 @@ import {
   totalsByDay,
   totalsByJob,
   totalsByMonth,
+  totalsByVendor,
   totalsByWeek,
 } from "@/lib/reportUtils";
 
@@ -118,6 +119,7 @@ export default async function ReportsPage({
         <TotalsTable title="By week" rows={totalsByWeek(rows)} />
         <TotalsTable title="By month" rows={totalsByMonth(rows)} />
         <TotalsTable title="By job / project" rows={totalsByJob(rows)} />
+        <TotalsTable title="By vendor" rows={totalsByVendor(rows)} />
       </div>
     </div>
   );

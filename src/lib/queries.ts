@@ -12,6 +12,7 @@ export function filteredExpensesQuery(
 
   if (filters.employee) query = query.eq("user_id", filters.employee);
   if (filters.job) query = query.ilike("job_name", `%${filters.job}%`);
+  if (filters.vendor) query = query.ilike("vendor", `%${filters.vendor}%`);
   if (filters.category) query = query.eq("category", filters.category as ExpenseCategory);
   // "awaiting_price" is a synthetic filter value (not a real status column
   // value) — it means "amount hasn't been entered yet."
@@ -34,6 +35,7 @@ export function parseFilters(searchParams: Record<string, string | string[] | un
   return {
     employee: get("employee") || undefined,
     job: get("job") || undefined,
+    vendor: get("vendor") || undefined,
     category: get("category") || undefined,
     status: get("status") || undefined,
     from: get("from") || undefined,

@@ -1,9 +1,10 @@
-import type { Profile } from "@/lib/types";
+import type { Profile, Vendor } from "@/lib/types";
 import { EXPENSE_CATEGORIES } from "@/lib/types";
 
 export interface EntryFilters {
   employee?: string;
   job?: string;
+  vendor?: string;
   category?: string;
   status?: string;
   from?: string;
@@ -15,13 +16,17 @@ export interface EntryFilters {
 // the selected filters as query params.
 export default function FiltersBar({
   profiles,
+  vendors,
   filters,
 }: {
   profiles: Profile[];
+  vendors: Vendor[];
   filters: EntryFilters;
 }) {
+  const vendorNames = vendors.map((v) => v.name);
+
   return (
-    <form method="get" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <form method="get" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
       <div className="col-span-2 sm:col-span-1">
         <label htmlFor="employee" className="block text-xs font-medium text-slate-600">
           Employee
@@ -53,6 +58,26 @@ export default function FiltersBar({
           placeholder="Search job…"
           className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
         />
+      </div>
+
+      <div className="col-span-2 sm:col-span-1">
+        <label htmlFor="vendor" className="block text-xs font-medium text-slate-600">
+          Vendor
+        </label>
+        <input
+          id="vendor"
+          name="vendor"
+          type="text"
+          list="filter-vendor-suggestions"
+          defaultValue={filters.vendor ?? ""}
+          placeholder="Search vendor…"
+          className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
+        />
+        <datalist id="filter-vendor-suggestions">
+          {vendorNames.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
       </div>
 
       <div>
@@ -118,7 +143,7 @@ export default function FiltersBar({
         />
       </div>
 
-      <div className="col-span-2 flex items-end gap-2 sm:col-span-3 lg:col-span-6">
+      <div className="col-span-2 flex items-end gap-2 sm:col-span-3 lg:col-span-7">
         <button
           type="submit"
           className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"

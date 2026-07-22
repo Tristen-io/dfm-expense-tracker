@@ -13,8 +13,9 @@ export default async function AdminEntriesPage({
   const filters = parseFilters(resolvedParams);
 
   const supabase = await createClient();
-  const [{ data: profiles }, { data: expenses }] = await Promise.all([
+  const [{ data: profiles }, { data: vendors }, { data: expenses }] = await Promise.all([
     supabase.from("profiles").select("*").order("full_name"),
+    supabase.from("vendors").select("*").order("name"),
     filteredExpensesQuery(supabase, filters),
   ]);
 
@@ -40,7 +41,7 @@ export default async function AdminEntriesPage({
       </div>
 
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <FiltersBar profiles={profiles ?? []} filters={filters} />
+        <FiltersBar profiles={profiles ?? []} vendors={vendors ?? []} filters={filters} />
       </div>
 
       <div className="mt-6">

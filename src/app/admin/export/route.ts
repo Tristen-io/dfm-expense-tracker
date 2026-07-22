@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
     Employee: e.employee_name,
     "Job/Project": e.job_name,
     Category: e.category,
+    Vendor: e.vendor ?? "",
     "Material Type": e.material_type ?? "",
     Quantity: e.quantity ?? "",
     Unit: e.quantity_unit ?? "",

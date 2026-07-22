@@ -127,6 +127,9 @@ export default function EntriesTable({
                     {expense.mix_design && <> · Mix: {expense.mix_design}</>}
                   </p>
                 )}
+                {expense.vendor && (
+                  <p className="text-sm text-slate-500">Vendor: {expense.vendor}</p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {awaitingPrice ? (
