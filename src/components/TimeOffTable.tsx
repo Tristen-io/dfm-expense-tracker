@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { deleteTimeOffRequest, updateTimeOffStatus } from "@/lib/actions/timeOff";
+import { countWeekdays } from "@/lib/dateUtils";
 import StatusBadge from "@/components/StatusBadge";
 import type { TimeOffRequest, TimeOffStatus } from "@/lib/types";
 
@@ -24,12 +25,6 @@ function formatDate(isoDate: string) {
 
 function formatDateTime(iso: string) {
   return dateTimeFmt.format(new Date(iso));
-}
-
-function totalDays(start: string, end: string) {
-  const s = new Date(`${start}T00:00:00Z`).getTime();
-  const e = new Date(`${end}T00:00:00Z`).getTime();
-  return Math.round((e - s) / 86_400_000) + 1;
 }
 
 export default function TimeOffTable({
@@ -78,14 +73,14 @@ export default function TimeOffTable({
       {requests.map((r) => {
         const busy = isPending && pendingId === r.id;
         const canEmployeeManage = mode === "employee" && r.status === "pending";
+        const workDays = countWeekdays(r.start_date, r.end_date);
 
         return (
           <li key={r.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="text-base font-semibold text-slate-900">
-                  {r.type} — {totalDays(r.start_date, r.end_date)} day
-                  {totalDays(r.start_date, r.end_date) === 1 ? "" : "s"}
+                  {r.type} — {workDays} work day{workDays === 1 ? "" : "s"}
                 </p>
                 <p className="text-sm text-slate-500">
                   {formatDate(r.start_date)}

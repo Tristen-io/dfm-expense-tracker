@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { createTimeOffRequest } from "@/lib/actions/timeOff";
+import { countWeekdays } from "@/lib/dateUtils";
 import { TIME_OFF_TYPES } from "@/lib/types";
 
 function todayLocalISODate() {
@@ -15,6 +16,9 @@ export default function TimeOffForm() {
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
   const today = todayLocalISODate();
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const workDays = countWeekdays(startDate, endDate);
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -67,6 +71,7 @@ export default function TimeOffForm() {
             required
             min={today}
             defaultValue={today}
+            onChange={(e) => setStartDate(e.target.value)}
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
         </div>
@@ -81,10 +86,17 @@ export default function TimeOffForm() {
             required
             min={today}
             defaultValue={today}
+            onChange={(e) => setEndDate(e.target.value)}
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
         </div>
       </div>
+
+      <p className="text-sm font-medium text-slate-700">
+        {endDate >= startDate
+          ? `${workDays} work day${workDays === 1 ? "" : "s"} (Mon–Fri only — weekends aren't counted)`
+          : "End date can't be before the start date."}
+      </p>
 
       <p className="text-xs text-slate-500">
         Requests submitted with less than a week&apos;s notice are still accepted, just flagged
