@@ -17,6 +17,12 @@ export default function Navbar({ profile }: { profile: Profile }) {
             <Link href="/my-entries" className="text-slate-600 hover:text-slate-900">
               My entries
             </Link>
+            <Link href="/time-off" className="text-slate-600 hover:text-slate-900">
+              Time off
+            </Link>
+            <Link href="/profile" className="text-slate-600 hover:text-slate-900">
+              My profile
+            </Link>
             {isAdmin && (
               <>
                 <Link href="/admin/entries" className="text-slate-600 hover:text-slate-900">
@@ -30,6 +36,12 @@ export default function Navbar({ profile }: { profile: Profile }) {
                 </Link>
                 <Link href="/admin/jobs" className="text-slate-600 hover:text-slate-900">
                   Jobs
+                </Link>
+                <Link href="/admin/time-off" className="text-slate-600 hover:text-slate-900">
+                  Time off requests
+                </Link>
+                <Link href="/admin/employees" className="text-slate-600 hover:text-slate-900">
+                  Employees
                 </Link>
               </>
             )}

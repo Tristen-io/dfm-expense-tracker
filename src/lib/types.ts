@@ -47,6 +47,69 @@ export type Profile = {
   id: string;
   full_name: string;
   role: Role;
+  // email is a denormalized copy of the auth.users email (see
+  // handle_new_user in supabase/schema.sql) — the auth schema isn't
+  // reachable through the anon-key REST API, so this is how the app shows
+  // it. phone/address are optional, self-editable by the employee (or by
+  // an admin) on /profile and /admin/employees.
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  created_at: string;
+};
+
+export type TimeOffType = "Vacation" | "Sick" | "Personal" | "Unpaid" | "Other";
+
+export const TIME_OFF_TYPES: TimeOffType[] = [
+  "Vacation",
+  "Sick",
+  "Personal",
+  "Unpaid",
+  "Other",
+];
+
+export type TimeOffStatus = "pending" | "approved" | "denied";
+
+export type TimeOffRequest = {
+  id: string;
+  user_id: string;
+  employee_name: string;
+  type: TimeOffType;
+  start_date: string; // YYYY-MM-DD
+  end_date: string; // YYYY-MM-DD
+  reason: string | null;
+  status: TimeOffStatus;
+  // True if submitted with less than MIN_NOTICE_DAYS notice (see
+  // src/lib/actions/timeOff.ts) — set once at submission, not recalculated.
+  short_notice: boolean;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WriteUpCategory = "Attendance" | "Safety" | "Performance" | "Conduct" | "Other";
+
+export const WRITE_UP_CATEGORIES: WriteUpCategory[] = [
+  "Attendance",
+  "Safety",
+  "Performance",
+  "Conduct",
+  "Other",
+];
+
+export type WriteUp = {
+  id: string;
+  user_id: string;
+  employee_name: string;
+  created_by_name: string;
+  incident_date: string; // YYYY-MM-DD
+  category: WriteUpCategory;
+  description: string;
+  corrective_action: string | null;
+  // Set via the acknowledge_write_up() RPC once the employee has seen it —
+  // never set by a generic row update, see schema.sql for why.
+  acknowledged_at: string | null;
   created_at: string;
 };
 
@@ -99,6 +162,38 @@ export type ProfileInsert = {
   id: string;
   full_name: string;
   role?: Role;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  created_at?: string;
+};
+
+export type TimeOffRequestInsert = {
+  user_id: string;
+  employee_name: string;
+  type: TimeOffType;
+  start_date: string;
+  end_date: string;
+  reason?: string | null;
+  status?: TimeOffStatus;
+  short_notice?: boolean;
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type WriteUpInsert = {
+  user_id: string;
+  employee_name: string;
+  created_by_name: string;
+  incident_date: string;
+  category: WriteUpCategory;
+  description: string;
+  corrective_action?: string | null;
+  acknowledged_at?: string | null;
+  id?: string;
   created_at?: string;
 };
 
@@ -163,9 +258,26 @@ export type Database = {
         Update: Partial<Expense>;
         Relationships: [];
       };
+      time_off_requests: {
+        Row: TimeOffRequest;
+        Insert: TimeOffRequestInsert;
+        Update: Partial<TimeOffRequest>;
+        Relationships: [];
+      };
+      write_ups: {
+        Row: WriteUp;
+        Insert: WriteUpInsert;
+        Update: Partial<WriteUp>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      acknowledge_write_up: {
+        Args: { write_up_id: string };
+        Returns: void;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

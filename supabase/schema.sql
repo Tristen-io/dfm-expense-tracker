@@ -14,6 +14,20 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- Basic contact info + a copy of the auth email, so the app can show/edit
+-- these without ever needing to query the protected auth.users table
+-- directly (that schema isn't reachable through the anon-key REST API).
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists address text;
+
+-- Backfills email for any profile created before this column existed.
+-- Harmless no-op on every re-run after the first (only fills nulls).
+update public.profiles p
+set email = u.email
+from auth.users u
+where u.id = p.id and p.email is null;
+
 -- Security-definer helper so RLS policies can check "is this caller an admin?"
 -- without recursively re-triggering RLS on profiles.
 create or replace function public.is_admin()
@@ -39,11 +53,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, full_name, role)
+  insert into public.profiles (id, full_name, role, email)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'full_name', new.email),
-    'employee'
+    'employee',
+    new.email
   );
   return new;
 end;
@@ -53,6 +68,32 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Defense-in-depth: profiles_update_own (below) lets a signed-in user update
+-- their own profile row (needed so employees can edit their own phone/
+-- address), but a bare row-level policy can't restrict which *columns*
+-- change — without this trigger, a crafted request could flip someone's own
+-- role to 'admin'. Any non-admin attempt to change role is silently
+-- reverted rather than erroring, so it never breaks a legitimate
+-- phone/address update that happens to include the unchanged role value.
+create or replace function public.prevent_role_self_escalation()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.role <> old.role and not public.is_admin() then
+    new.role := old.role;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_prevent_role_escalation on public.profiles;
+create trigger profiles_prevent_role_escalation
+  before update on public.profiles
+  for each row execute function public.prevent_role_self_escalation();
 
 -- ============================================================
 -- VENDORS  (admin-curated list, used as suggestions on the expense form and
@@ -191,20 +232,120 @@ create trigger expenses_set_updated_at
   for each row execute function public.set_updated_at();
 
 -- ============================================================
+-- TIME OFF REQUESTS
+-- ============================================================
+create table if not exists public.time_off_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  employee_name text not null,
+  type text not null,
+  start_date date not null,
+  end_date date not null,
+  reason text,
+  status text not null default 'pending',
+  -- True when the request was submitted with less than the minimum notice
+  -- window (see MIN_NOTICE_DAYS in src/lib/actions/timeOff.ts). Computed
+  -- once at submission time and stored, not recalculated later — the
+  -- "was this short notice" fact shouldn't silently change after the fact
+  -- just because time passed.
+  short_notice boolean not null default false,
+  reviewed_by_name text,
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.time_off_requests drop constraint if exists time_off_requests_type_check;
+alter table public.time_off_requests add constraint time_off_requests_type_check check (
+  type in ('Vacation', 'Sick', 'Personal', 'Unpaid', 'Other')
+);
+
+alter table public.time_off_requests drop constraint if exists time_off_requests_status_check;
+alter table public.time_off_requests add constraint time_off_requests_status_check check (
+  status in ('pending', 'approved', 'denied')
+);
+
+alter table public.time_off_requests drop constraint if exists time_off_requests_dates_check;
+alter table public.time_off_requests add constraint time_off_requests_dates_check check (
+  end_date >= start_date
+);
+
+create index if not exists time_off_requests_user_id_idx on public.time_off_requests (user_id);
+create index if not exists time_off_requests_status_idx on public.time_off_requests (status);
+create index if not exists time_off_requests_start_date_idx on public.time_off_requests (start_date);
+
+drop trigger if exists time_off_requests_set_updated_at on public.time_off_requests;
+create trigger time_off_requests_set_updated_at
+  before update on public.time_off_requests
+  for each row execute function public.set_updated_at();
+
+-- ============================================================
+-- WRITE-UPS  (disciplinary documentation — admin-authored, visible to and
+-- acknowledgeable by the employee it's about)
+-- ============================================================
+create table if not exists public.write_ups (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  employee_name text not null,
+  created_by_name text not null,
+  incident_date date not null,
+  category text not null,
+  description text not null,
+  corrective_action text,
+  acknowledged_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.write_ups drop constraint if exists write_ups_category_check;
+alter table public.write_ups add constraint write_ups_category_check check (
+  category in ('Attendance', 'Safety', 'Performance', 'Conduct', 'Other')
+);
+
+create index if not exists write_ups_user_id_idx on public.write_ups (user_id);
+
+-- Lets an employee acknowledge a write-up about themselves (sets
+-- acknowledged_at) without granting a general UPDATE policy that would let
+-- them edit the description/category/etc of their own record. security
+-- definer + the explicit user_id/acknowledged_at-is-null checks inside the
+-- function body are what make this safe to expose — same pattern as
+-- is_admin() above.
+create or replace function public.acknowledge_write_up(write_up_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.write_ups
+  set acknowledged_at = now()
+  where id = write_up_id and user_id = auth.uid() and acknowledged_at is null;
+end;
+$$;
+
+grant execute on function public.acknowledge_write_up(uuid) to authenticated;
+
+-- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
 alter table public.profiles enable row level security;
 alter table public.expenses enable row level security;
 alter table public.vendors enable row level security;
 alter table public.jobs enable row level security;
+alter table public.time_off_requests enable row level security;
+alter table public.write_ups enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
   for select using (id = auth.uid() or public.is_admin());
 
+-- Admins can also update any profile now (contact-info corrections, and
+-- promoting/demoting role from /admin/employees instead of the Supabase
+-- dashboard) — role changes are still guarded by the trigger above for
+-- non-admin callers.
 drop policy if exists "profiles_update_own" on public.profiles;
-create policy "profiles_update_own" on public.profiles
-  for update using (id = auth.uid());
+drop policy if exists "profiles_update_own_or_admin" on public.profiles;
+create policy "profiles_update_own_or_admin" on public.profiles
+  for update using (id = auth.uid() or public.is_admin());
 
 drop policy if exists "expenses_select_own_or_admin" on public.expenses;
 create policy "expenses_select_own_or_admin" on public.expenses
@@ -253,6 +394,43 @@ create policy "jobs_insert_admin" on public.jobs
 
 drop policy if exists "jobs_delete_admin" on public.jobs;
 create policy "jobs_delete_admin" on public.jobs
+  for delete using (public.is_admin());
+
+-- Same visibility shape as expenses: an employee sees/manages their own
+-- requests, an admin sees and reviews everyone's.
+drop policy if exists "time_off_select_own_or_admin" on public.time_off_requests;
+create policy "time_off_select_own_or_admin" on public.time_off_requests
+  for select using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "time_off_insert_own" on public.time_off_requests;
+create policy "time_off_insert_own" on public.time_off_requests
+  for insert with check (user_id = auth.uid());
+
+drop policy if exists "time_off_update_own_pending_or_admin" on public.time_off_requests;
+create policy "time_off_update_own_pending_or_admin" on public.time_off_requests
+  for update using (
+    (user_id = auth.uid() and status = 'pending') or public.is_admin()
+  );
+
+drop policy if exists "time_off_delete_own_pending_or_admin" on public.time_off_requests;
+create policy "time_off_delete_own_pending_or_admin" on public.time_off_requests
+  for delete using (
+    (user_id = auth.uid() and status = 'pending') or public.is_admin()
+  );
+
+-- Write-ups: only an admin authors/removes one; the employee it's about can
+-- read their own (acknowledging happens through the security-definer
+-- function above, not a generic UPDATE policy).
+drop policy if exists "write_ups_select_own_or_admin" on public.write_ups;
+create policy "write_ups_select_own_or_admin" on public.write_ups
+  for select using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "write_ups_insert_admin" on public.write_ups;
+create policy "write_ups_insert_admin" on public.write_ups
+  for insert with check (public.is_admin());
+
+drop policy if exists "write_ups_delete_admin" on public.write_ups;
+create policy "write_ups_delete_admin" on public.write_ups
   for delete using (public.is_admin());
 
 -- ============================================================

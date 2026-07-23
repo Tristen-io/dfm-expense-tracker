@@ -90,6 +90,30 @@ this size unless Supabase or Vercel change their free-tier terms.
   image, checked before it's uploaded, so a full-resolution phone photo
   (or an accidental non-image file) can't eat into Supabase's free-tier
   storage or clutter an entry with something unreadable.
+- **Time off requests** (`/time-off`) — an employee picks a type (Vacation /
+  Sick / Personal / Unpaid / Other), a start and end date, and an optional
+  note. Requests submitted with less than a week's notice are still
+  accepted but flagged "short notice" so an admin can see that at a glance
+  — it's a flag, not a block. No PTO balance/accrual tracking — this just
+  logs requests and their outcome, you keep tracking actual balances
+  however you already do for payroll. Admins review everything at
+  `/admin/time-off`, with Pending / Short-notice-pending counts up top and
+  approve/deny/reset actions per request, same pattern as expense review.
+- **Employees** (`/admin/employees`) — a directory of everyone with an
+  account. Click into someone to see and edit their contact info (phone,
+  address — email is pulled from their login automatically), promote or
+  demote their admin access (no more doing this by hand in the Supabase
+  Table Editor for anyone after your first admin), and their full write-up
+  history.
+- **My profile** (`/profile`) — every employee's self-service page: edit
+  your own phone/address, and see any write-ups filed about you.
+- **Write-ups** — admins log a dated incident (category, description,
+  optional expected next steps) against an employee from their profile
+  page. The employee sees it on their own `/profile` and can mark it
+  acknowledged (timestamped) — standard documentation practice, and gives
+  you a record the employee saw it if it's ever disputed later. Employees
+  can't edit or hide a write-up, only acknowledge it; only an admin can
+  remove one (for correcting a mistaken entry).
 
 ## One-time setup
 
@@ -130,7 +154,11 @@ itself admin access. To promote your own account:
    instead of the submission form, and the nav bar will show "All entries"
    and "Reports."
 
-Repeat this for anyone else who should have admin access.
+This manual dashboard step is only needed once, for your very first admin
+account (a stray signup shouldn't be able to grant itself admin access, so
+there has to be some out-of-band way to create the first one). After that,
+promote anyone else to admin — or demote one — right in the app, from their
+profile at `/admin/employees/[their id]`.
 
 ### 4. Deploy to Vercel
 
@@ -175,16 +203,20 @@ src/
     forgot-password/, reset-password/ — self-service password reset
     submit/                  — employee expense submission form
     my-entries/              — employee's own entries
+    time-off/                — employee time off request form + own history
+    profile/                 — employee's own contact info + write-ups
     admin/
       entries/                — all entries + filters + dashboard tiles + pagination + bulk approve
       vendors/                 — admin-managed list of common vendors
       jobs/                     — admin-managed list of common jobs/projects
       reports/                 — totals by day/week/month/job/vendor/employee
       export/route.ts          — CSV export (GET, streams a download)
+      time-off/                — admin review of time off requests
+      employees/                — directory + per-employee profile, role, write-ups
     page.tsx                  — redirects to /submit or /admin/entries by role
-  components/                 — ExpenseForm, EntriesTable, FiltersBar, etc.
+  components/                 — ExpenseForm, EntriesTable, FiltersBar, TimeOffForm, WriteUpList, etc.
   lib/
-    actions/                  — Server Actions (auth, expenses, receipts, vendors, jobs)
+    actions/                  — Server Actions (auth, expenses, receipts, vendors, jobs, timeOff, writeUps, profile)
     supabase/                 — browser + server Supabase clients
     types.ts                  — shared domain types + the Database schema type
     queries.ts                — shared filtered-query builder (entries + export use the same logic)
@@ -236,6 +268,22 @@ database columns exist, you'll see errors until both are in sync.
   an `expense_status_history` table and insert a row from
   `updateExpenseStatus` in `src/lib/actions/expenses.ts` instead of
   overwriting the two columns on `expenses`.
+- **Time off notice window**: the "short notice" threshold is the
+  `MIN_NOTICE_DAYS` constant at the top of `src/lib/actions/timeOff.ts`
+  (currently 7 days). Change that one number to adjust the policy. Turning
+  it into an admin-editable setting (rather than a value only I can change)
+  would need a small `settings` table — a reasonable next step if the
+  notice window ends up changing often.
+- **PTO balances**: deliberately not built — `time_off_requests` just logs
+  requests and outcomes, no accrual math. If you want the app to show "8
+  vacation days remaining," that needs an explicit policy (accrual rate,
+  carryover rules, paid vs. unpaid) decided first, then a balance column on
+  `profiles` (or a per-year table) that `updateTimeOffStatus` decrements on
+  approval.
+- **Write-up signatures**: acknowledgment today is a single timestamped
+  click (`acknowledged_at`), not a captured signature. If you need
+  something closer to a physical signature for HR/legal purposes, that's a
+  bigger addition (a signature-capture field, or an e-signature service).
 
 ## A note on the versions used
 
