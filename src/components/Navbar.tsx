@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { logout } from "@/lib/actions/auth";
+import NavDropdown from "@/components/NavDropdown";
 import type { Profile } from "@/lib/types";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -10,24 +11,6 @@ function NavLink({ href, children }: { href: string; children: React.ReactNode }
     >
       {children}
     </Link>
-  );
-}
-
-// Plain <details>/<summary> — no client JS needed for open/close, works
-// without hydration, and every link inside navigates to a new page anyway
-// (which resets the open state for free). `name="nav-dropdown"` makes the
-// three menus mutually exclusive: opening one closes any other that's open.
-function NavDropdown({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <details name="nav-dropdown" className="group relative">
-      <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 [&::-webkit-details-marker]:hidden">
-        {label}
-        <span className="text-xs text-slate-400 transition-transform group-open:rotate-180">▾</span>
-      </summary>
-      <div className="absolute left-0 z-20 mt-1 w-56 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-        {children}
-      </div>
-    </details>
   );
 }
 
