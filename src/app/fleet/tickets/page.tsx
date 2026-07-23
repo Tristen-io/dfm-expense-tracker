@@ -30,7 +30,7 @@ export default async function TicketsPage({
           <h1 className="text-xl font-semibold text-slate-900">Service tickets</h1>
           <p className="mt-1 text-sm text-slate-500">
             {tickets?.length ?? 0} ticket{tickets?.length === 1 ? "" : "s"}
-            {status ? ` (status: ${status.replace("_", " ")})` : ""}.
+            {status ? ` (status: ${status.replaceAll("_", " ")})` : ""}.
           </p>
         </div>
         <Link
@@ -52,7 +52,7 @@ export default async function TicketsPage({
                 : "border-slate-300 text-slate-700 hover:bg-slate-50"
             }`}
           >
-            {s.replace("_", " ")}
+            {s.replaceAll("_", " ")}
           </a>
         ))}
         <Link

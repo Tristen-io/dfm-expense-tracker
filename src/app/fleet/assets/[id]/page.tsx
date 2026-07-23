@@ -3,12 +3,13 @@ import { notFound, redirect } from "next/navigation";
 import AssetForm from "@/components/AssetForm";
 import AssetPhotoUpload from "@/components/AssetPhotoUpload";
 import AssetStatusBadge from "@/components/AssetStatusBadge";
+import MaintenanceSchedulePanel from "@/components/MaintenanceSchedulePanel";
 import MeterReadingPanel from "@/components/MeterReadingPanel";
 import TicketList from "@/components/TicketList";
 import { deleteAsset, updateAsset } from "@/lib/actions/assets";
 import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import type { Profile } from "@/lib/types";
+import type { MaintenanceRecord, Profile } from "@/lib/types";
 
 const dateFmt = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -24,20 +25,27 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const isAdmin = profile.role === "admin";
 
   const supabase = await createClient();
-  const [{ data: asset }, { data: readings }, { data: tickets }] = await Promise.all([
-    supabase.from("assets").select("*").eq("id", id).single(),
-    supabase
-      .from("meter_readings")
-      .select("*")
-      .eq("asset_id", id)
-      .order("created_at", { ascending: false })
-      .limit(25),
-    supabase
-      .from("service_tickets")
-      .select("*")
-      .eq("asset_id", id)
-      .order("created_at", { ascending: false }),
-  ]);
+  const [{ data: asset }, { data: readings }, { data: tickets }, { data: schedules }, { data: maintenanceTypes }] =
+    await Promise.all([
+      supabase.from("assets").select("*").eq("id", id).single(),
+      supabase
+        .from("meter_readings")
+        .select("*")
+        .eq("asset_id", id)
+        .order("created_at", { ascending: false })
+        .limit(25),
+      supabase
+        .from("service_tickets")
+        .select("*")
+        .eq("asset_id", id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("maintenance_schedules")
+        .select("*")
+        .eq("asset_id", id)
+        .order("maintenance_type"),
+      supabase.from("maintenance_types").select("*").order("name"),
+    ]);
 
   if (!asset) notFound();
 
@@ -50,6 +58,21 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
     ]);
     categories = c ?? [];
     profiles = p ?? [];
+  }
+
+  const scheduleIds = (schedules ?? []).map((s) => s.id);
+  const { data: records } =
+    scheduleIds.length > 0
+      ? await supabase
+          .from("maintenance_records")
+          .select("*")
+          .in("schedule_id", scheduleIds)
+          .order("performed_date", { ascending: false })
+      : { data: [] as MaintenanceRecord[] };
+
+  const recordsBySchedule: Record<string, MaintenanceRecord[]> = {};
+  for (const r of records ?? []) {
+    (recordsBySchedule[r.schedule_id] ??= []).push(r);
   }
 
   async function handleDelete() {
@@ -158,6 +181,21 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
               </div>
             </div>
           )}
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Maintenance</h2>
+            <div className="mt-3">
+              <MaintenanceSchedulePanel
+                assetId={asset.id}
+                meterType={asset.meter_type}
+                currentMeterValue={asset.current_meter_value}
+                schedules={schedules ?? []}
+                recordsBySchedule={recordsBySchedule}
+                maintenanceTypes={maintenanceTypes ?? []}
+                isAdmin={isAdmin}
+              />
+            </div>
+          </div>
 
           <div>
             <h2 className="text-base font-semibold text-slate-900">Service tickets</h2>

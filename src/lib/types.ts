@@ -433,6 +433,76 @@ export type TicketCommentInsert = {
   created_at?: string;
 };
 
+// ============================================================
+// MAINTENANCE — admin-configured per-asset service schedules (time and/or
+// meter based, "whichever comes first") and the log of completed service
+// against them. See supabase/schema.sql for the matching tables.
+// Status (ok/due soon/overdue) is computed client-side from these rows,
+// not stored — see src/lib/maintenanceUtils.ts.
+// ============================================================
+
+export type MaintenanceType = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+export type MaintenanceSchedule = {
+  id: string;
+  asset_id: string;
+  maintenance_type: string;
+  interval_days: number | null;
+  interval_meter: number | null;
+  // Denormalized from the most recent maintenance_records row — kept in
+  // sync by the apply_maintenance_record() trigger, not recomputed on read.
+  last_performed_date: string | null; // YYYY-MM-DD
+  last_performed_meter: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MaintenanceRecord = {
+  id: string;
+  schedule_id: string;
+  performed_date: string; // YYYY-MM-DD
+  performed_meter: number | null;
+  performed_by_id: string | null;
+  performed_by_name: string;
+  notes: string | null;
+  created_at: string;
+};
+
+export type MaintenanceTypeInsert = {
+  name: string;
+  id?: string;
+  created_at?: string;
+};
+
+export type MaintenanceScheduleInsert = {
+  asset_id: string;
+  maintenance_type: string;
+  interval_days?: number | null;
+  interval_meter?: number | null;
+  last_performed_date?: string | null;
+  last_performed_meter?: number | null;
+  notes?: string | null;
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MaintenanceRecordInsert = {
+  schedule_id: string;
+  performed_date: string;
+  performed_meter?: number | null;
+  performed_by_id?: string | null;
+  performed_by_name: string;
+  notes?: string | null;
+  id?: string;
+  created_at?: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -515,6 +585,24 @@ export type Database = {
         Row: Notification;
         Insert: Omit<Notification, "id" | "created_at"> & { id?: string; created_at?: string };
         Update: Partial<Notification>;
+        Relationships: [];
+      };
+      maintenance_types: {
+        Row: MaintenanceType;
+        Insert: MaintenanceTypeInsert;
+        Update: Partial<MaintenanceType>;
+        Relationships: [];
+      };
+      maintenance_schedules: {
+        Row: MaintenanceSchedule;
+        Insert: MaintenanceScheduleInsert;
+        Update: Partial<MaintenanceSchedule>;
+        Relationships: [];
+      };
+      maintenance_records: {
+        Row: MaintenanceRecord;
+        Insert: MaintenanceRecordInsert;
+        Update: Partial<MaintenanceRecord>;
         Relationships: [];
       };
     };

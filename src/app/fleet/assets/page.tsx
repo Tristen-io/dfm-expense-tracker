@@ -1,7 +1,8 @@
 import Link from "next/link";
 import AssetTable from "@/components/AssetTable";
+import { worstMaintenanceStatus } from "@/lib/maintenanceUtils";
 import { createClient } from "@/lib/supabase/server";
-import type { AssetStatus } from "@/lib/types";
+import type { AssetStatus, MaintenanceSchedule } from "@/lib/types";
 
 const VALID_STATUSES: AssetStatus[] = ["active", "out_of_service", "retired"];
 
@@ -32,6 +33,25 @@ export default async function AssetsPage({
     supabase.from("asset_categories").select("*").order("name"),
   ]);
 
+  const assetIds = (assets ?? []).map((a) => a.id);
+  const { data: schedules } =
+    assetIds.length > 0
+      ? await supabase.from("maintenance_schedules").select("*").in("asset_id", assetIds)
+      : { data: [] as MaintenanceSchedule[] };
+
+  const schedulesByAsset = new Map<string, MaintenanceSchedule[]>();
+  for (const s of schedules ?? []) {
+    const list = schedulesByAsset.get(s.asset_id) ?? [];
+    list.push(s);
+    schedulesByAsset.set(s.asset_id, list);
+  }
+  const maintenanceStatusByAsset = Object.fromEntries(
+    (assets ?? []).map((a) => [
+      a.id,
+      worstMaintenanceStatus(schedulesByAsset.get(a.id) ?? [], a.current_meter_value),
+    ])
+  );
+
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -39,7 +59,7 @@ export default async function AssetsPage({
           <h1 className="text-xl font-semibold text-slate-900">Assets</h1>
           <p className="mt-1 text-sm text-slate-500">
             {assets?.length ?? 0} asset{assets?.length === 1 ? "" : "s"}
-            {status ? ` (status: ${status.replace("_", " ")})` : ""}
+            {status ? ` (status: ${status.replaceAll("_", " ")})` : ""}
             {category ? ` in ${category}` : ""}.
           </p>
         </div>
@@ -56,7 +76,7 @@ export default async function AssetsPage({
                 : "border-slate-300 text-slate-700 hover:bg-slate-50"
             }`}
           >
-            {s.replace("_", " ")}
+            {s.replaceAll("_", " ")}
           </a>
         ))}
         <Link
@@ -90,7 +110,7 @@ export default async function AssetsPage({
       )}
 
       <div className="mt-6">
-        <AssetTable assets={assets ?? []} />
+        <AssetTable assets={assets ?? []} maintenanceStatusByAsset={maintenanceStatusByAsset} />
       </div>
     </div>
   );

@@ -72,6 +72,8 @@ export default async function Navbar({ profile }: { profile: Profile }) {
                 <NavLink href="/fleet/assets/new">New asset</NavLink>
                 <Divider />
                 <NavLink href="/fleet/tickets">Service tickets</NavLink>
+                <Divider />
+                <NavLink href="/fleet/maintenance-types">Maintenance types</NavLink>
               </NavDropdown>
             </nav>
           ) : (

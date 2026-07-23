@@ -18,7 +18,7 @@ export default function TicketStatusHistory({ entries }: { entries: TicketStatus
         {entries.map((e) => (
           <li key={e.id} className="text-sm">
             <span className="font-medium capitalize text-slate-900">
-              {e.status.replace("_", " ")}
+              {e.status.replaceAll("_", " ")}
             </span>{" "}
             <span className="text-slate-500">
               — {e.changed_by_name} · {dateTimeFmt.format(new Date(e.created_at))}

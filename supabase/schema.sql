@@ -747,6 +747,112 @@ $$;
 
 grant execute on function public.mark_notifications_read(uuid) to authenticated;
 
+-- MAINTENANCE TYPES — admin-curated suggestions, same pattern as
+-- asset_categories/vendors/jobs. maintenance_schedules.maintenance_type
+-- stays free text, not a foreign key.
+create table if not exists public.maintenance_types (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists maintenance_types_name_lower_idx
+  on public.maintenance_types (lower(name));
+
+-- MAINTENANCE SCHEDULES — one row per (asset, maintenance type) the crew
+-- wants tracked, e.g. "Truck 1 — Oil change every 5,000 mi or 6 months,
+-- whichever comes first." last_performed_date/meter are denormalized from
+-- the most recent maintenance_records row (kept in sync by
+-- apply_maintenance_record() below), same "store the current value, don't
+-- recompute on every read" choice as assets.current_meter_value — this is
+-- what lets the assets list page compute every row's status in one query
+-- instead of one aggregate per asset.
+create table if not exists public.maintenance_schedules (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.assets(id) on delete cascade,
+  maintenance_type text not null,
+  -- At least one of these two must be set — see
+  -- maintenance_schedules_interval_check below. Both can be set at once
+  -- ("whichever comes first").
+  interval_days int,
+  interval_meter numeric(12, 1),
+  last_performed_date date,
+  last_performed_meter numeric(12, 1),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.maintenance_schedules drop constraint if exists maintenance_schedules_interval_check;
+alter table public.maintenance_schedules add constraint maintenance_schedules_interval_check check (
+  interval_days is not null or interval_meter is not null
+);
+
+alter table public.maintenance_schedules drop constraint if exists maintenance_schedules_interval_days_check;
+alter table public.maintenance_schedules add constraint maintenance_schedules_interval_days_check check (
+  interval_days is null or interval_days > 0
+);
+
+alter table public.maintenance_schedules drop constraint if exists maintenance_schedules_interval_meter_check;
+alter table public.maintenance_schedules add constraint maintenance_schedules_interval_meter_check check (
+  interval_meter is null or interval_meter > 0
+);
+
+create unique index if not exists maintenance_schedules_asset_type_lower_idx
+  on public.maintenance_schedules (asset_id, lower(maintenance_type));
+create index if not exists maintenance_schedules_asset_id_idx
+  on public.maintenance_schedules (asset_id);
+
+drop trigger if exists maintenance_schedules_set_updated_at on public.maintenance_schedules;
+create trigger maintenance_schedules_set_updated_at
+  before update on public.maintenance_schedules
+  for each row execute function public.set_updated_at();
+
+-- MAINTENANCE RECORDS — log of completed service against a schedule. A
+-- schedule must exist first (set up by an admin with its interval); any
+-- signed-in user can then log that the work was done, same "anyone can
+-- log a meter reading, only an admin configures the asset" split as
+-- meter_readings.
+create table if not exists public.maintenance_records (
+  id uuid primary key default gen_random_uuid(),
+  schedule_id uuid not null references public.maintenance_schedules(id) on delete cascade,
+  performed_date date not null,
+  performed_meter numeric(12, 1),
+  performed_by_id uuid references public.profiles(id) on delete set null,
+  performed_by_name text not null,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists maintenance_records_schedule_id_idx
+  on public.maintenance_records (schedule_id);
+
+-- Keeps maintenance_schedules.last_performed_date/meter in sync. Only
+-- moves forward — a record logged out of order (backfilling an older
+-- service) doesn't clobber a more recent one already on file.
+create or replace function public.apply_maintenance_record()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.maintenance_schedules
+  set
+    last_performed_date = new.performed_date,
+    last_performed_meter = new.performed_meter,
+    updated_at = now()
+  where id = new.schedule_id
+    and (last_performed_date is null or new.performed_date >= last_performed_date);
+  return new;
+end;
+$$;
+
+drop trigger if exists maintenance_records_apply on public.maintenance_records;
+create trigger maintenance_records_apply
+  after insert on public.maintenance_records
+  for each row execute function public.apply_maintenance_record();
+
 -- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
@@ -763,6 +869,9 @@ alter table public.service_tickets enable row level security;
 alter table public.ticket_status_history enable row level security;
 alter table public.ticket_comments enable row level security;
 alter table public.notifications enable row level security;
+alter table public.maintenance_types enable row level security;
+alter table public.maintenance_schedules enable row level security;
+alter table public.maintenance_records enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
@@ -951,6 +1060,50 @@ create policy "ticket_comments_insert_own" on public.ticket_comments
 drop policy if exists "ticket_comments_delete_own_or_admin" on public.ticket_comments;
 create policy "ticket_comments_delete_own_or_admin" on public.ticket_comments
   for delete using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "maintenance_types_select_authenticated" on public.maintenance_types;
+create policy "maintenance_types_select_authenticated" on public.maintenance_types
+  for select using (auth.uid() is not null);
+
+drop policy if exists "maintenance_types_insert_admin" on public.maintenance_types;
+create policy "maintenance_types_insert_admin" on public.maintenance_types
+  for insert with check (public.is_admin());
+
+drop policy if exists "maintenance_types_delete_admin" on public.maintenance_types;
+create policy "maintenance_types_delete_admin" on public.maintenance_types
+  for delete using (public.is_admin());
+
+-- Configuring a schedule (what's tracked, how often) is admin-only, same
+-- as editing the asset itself. Anyone can read it — it drives the
+-- overdue/due-soon coloring on the assets list, which is shared-crew
+-- visibility like everything else in this section.
+drop policy if exists "maintenance_schedules_select_authenticated" on public.maintenance_schedules;
+create policy "maintenance_schedules_select_authenticated" on public.maintenance_schedules
+  for select using (auth.uid() is not null);
+
+drop policy if exists "maintenance_schedules_insert_admin" on public.maintenance_schedules;
+create policy "maintenance_schedules_insert_admin" on public.maintenance_schedules
+  for insert with check (public.is_admin());
+
+drop policy if exists "maintenance_schedules_update_admin" on public.maintenance_schedules;
+create policy "maintenance_schedules_update_admin" on public.maintenance_schedules
+  for update using (public.is_admin());
+
+drop policy if exists "maintenance_schedules_delete_admin" on public.maintenance_schedules;
+create policy "maintenance_schedules_delete_admin" on public.maintenance_schedules
+  for delete using (public.is_admin());
+
+-- Logging that service was performed is open to any signed-in user (same
+-- reasoning as meter_readings: the person who actually did the oil change
+-- is often not an admin). with check pins performed_by_id to the caller —
+-- same spoofing gap the meter_readings policy above was fixed for.
+drop policy if exists "maintenance_records_select_authenticated" on public.maintenance_records;
+create policy "maintenance_records_select_authenticated" on public.maintenance_records
+  for select using (auth.uid() is not null);
+
+drop policy if exists "maintenance_records_insert_authenticated" on public.maintenance_records;
+create policy "maintenance_records_insert_authenticated" on public.maintenance_records
+  for insert with check (auth.uid() is not null and performed_by_id = auth.uid());
 
 -- Notifications are strictly private to their recipient — no admin
 -- override, unlike everything else in this file (an admin doesn't need to

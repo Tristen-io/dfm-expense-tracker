@@ -93,7 +93,7 @@ export default function TicketPanel({
             >
               {TICKET_STATUSES.map((s) => (
                 <option key={s} value={s} className="capitalize">
-                  {s.replace("_", " ")}
+                  {s.replaceAll("_", " ")}
                 </option>
               ))}
             </select>
