@@ -9,7 +9,10 @@
 // don't qualify, so an interface here would silently make every table's
 // Row/Insert/Update resolve to `never`.
 
-export type Role = "employee" | "admin";
+// "mechanic" has full parity with "admin" within Fleet & Equipment only —
+// see is_fleet_staff() in supabase/schema.sql for the RLS side of this and
+// Navbar.tsx/fleet/layout.tsx/proxy.ts for the routing side.
+export type Role = "employee" | "admin" | "mechanic";
 
 export type ExpenseCategory =
   | "General purchase"

@@ -10,8 +10,19 @@ create extension if not exists "pgcrypto";
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null,
-  role text not null default 'employee' check (role in ('employee', 'admin')),
+  role text not null default 'employee' check (role in ('employee', 'admin', 'mechanic')),
   created_at timestamptz not null default now()
+);
+
+-- Re-stated as an explicit named constraint so this widens on a database
+-- that already has the table (the inline check above only applies on a
+-- genuinely fresh install — "create table if not exists" is a no-op
+-- otherwise). "mechanic" is a new role: full parity with admin within
+-- Fleet & Equipment, no access outside it — see is_fleet_staff() below and
+-- the Fleet & Equipment RLS section for what that means in practice.
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (
+  role in ('employee', 'admin', 'mechanic')
 );
 
 -- Basic contact info + a copy of the auth email, so the app can show/edit
@@ -40,6 +51,39 @@ as $$
   select exists (
     select 1 from public.profiles
     where id = auth.uid() and role = 'admin'
+  );
+$$;
+
+-- Mechanic is scoped to Fleet & Equipment only — never used as a stand-in
+-- for is_admin() outside that section (HR/expense/employee-management
+-- policies below stay on is_admin()).
+create or replace function public.is_mechanic()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid() and role = 'mechanic'
+  );
+$$;
+
+-- "Can fully manage Fleet & Equipment" — admin or mechanic. Used throughout
+-- the Fleet & Equipment section below in place of is_admin(), so a mechanic
+-- gets the exact same fleet capabilities an admin has, and nothing more
+-- (this function is never referenced outside that section).
+create or replace function public.is_fleet_staff()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid() and role in ('admin', 'mechanic')
   );
 $$;
 
@@ -329,8 +373,19 @@ grant execute on function public.acknowledge_write_up(uuid) to authenticated;
 -- tickets, notifications). Deliberately scoped down from the full
 -- CMMS ask (no PM schedules/health-color engine/inspections yet — those
 -- are phases 2/3) so this lands as something reviewable and testable on
--- its own. No new roles: visibility follows the existing employee/admin
--- split, same as every other table in this file.
+-- its own.
+--
+-- ACCESS MODEL (see RLS section below for the actual policies): admins and
+-- mechanics ("fleet staff", is_fleet_staff()) have full read/write access
+-- to everything in this section — asset registry, meter readings, service
+-- tickets, comments/history, maintenance types/schedules/records, and the
+-- asset-photos bucket. Employees get a deliberately narrow slice: they can
+-- read the asset list and maintenance schedules (needed to report a ticket
+-- against an asset and to see what maintenance is due), file a service
+-- ticket and see their own reported tickets, but cannot read or write
+-- meter readings, maintenance types/records, ticket comments/history, or
+-- asset photos, and cannot write to the asset registry or maintenance
+-- schedules at all.
 -- ============================================================
 
 -- ASSET CATEGORIES — admin-curated suggestions, same free-text-with-
@@ -452,8 +507,8 @@ begin
         'New reading (%) is less than the latest recorded reading (%). An admin can override this with a reason.',
         new.value, latest;
     end if;
-    if not public.is_admin() then
-      raise exception 'Only an admin can override a backwards meter reading.';
+    if not public.is_fleet_staff() then
+      raise exception 'Only an admin or mechanic can override a backwards meter reading.';
     end if;
     if new.override_reason is null or btrim(new.override_reason) = '' then
       raise exception 'An override reason is required when correcting a backwards reading.';
@@ -663,8 +718,10 @@ alter table public.notifications add constraint notifications_type_check check (
 create index if not exists notifications_user_id_idx on public.notifications (user_id);
 create index if not exists notifications_unread_idx on public.notifications (user_id, read_at);
 
--- Fans a new ticket out to every admin. Runs as security definer so it can
--- insert on behalf of every admin regardless of who filed the ticket.
+-- Fans a new ticket out to every admin and mechanic (fleet staff — they're
+-- the ones who'll actually work the ticket). Runs as security definer so it
+-- can insert on behalf of every fleet-staff profile regardless of who filed
+-- the ticket.
 create or replace function public.notify_new_ticket()
 returns trigger
 language plpgsql
@@ -683,7 +740,7 @@ begin
     new.reported_by_name || ' reported an issue.',
     '/fleet/tickets/' || new.id
   from public.profiles p
-  where p.role = 'admin';
+  where p.role in ('admin', 'mechanic');
   return new;
 end;
 $$;
@@ -1002,62 +1059,72 @@ drop policy if exists "write_ups_delete_admin" on public.write_ups;
 create policy "write_ups_delete_admin" on public.write_ups
   for delete using (public.is_admin());
 
--- Fleet & equipment is shared crew visibility (like vendors/jobs), not
--- per-user (like expenses/time off) — everyone signed in can see the
--- asset registry and ticket queue; only admins curate the asset registry
--- itself.
+-- Fleet & equipment access model (see the section comment above): fleet
+-- staff (admin or mechanic, is_fleet_staff()) get full read/write access to
+-- everything below. Employees get a narrow read-only slice — the asset
+-- list and maintenance schedules (so they can pick an asset when reporting
+-- a ticket, and see what maintenance is due), plus their own reported
+-- tickets — and can only ever write a service ticket for themselves.
+-- asset_categories, meter_readings, ticket history/comments, maintenance
+-- types/records, and asset-photos are fleet-staff only, full stop —
+-- employees have no UI that touches them and no RLS grant either.
 drop policy if exists "asset_categories_select_authenticated" on public.asset_categories;
-create policy "asset_categories_select_authenticated" on public.asset_categories
-  for select using (auth.uid() is not null);
+drop policy if exists "asset_categories_select_fleet_staff" on public.asset_categories;
+create policy "asset_categories_select_fleet_staff" on public.asset_categories
+  for select using (public.is_fleet_staff());
 
 drop policy if exists "asset_categories_insert_admin" on public.asset_categories;
 create policy "asset_categories_insert_admin" on public.asset_categories
-  for insert with check (public.is_admin());
+  for insert with check (public.is_fleet_staff());
 
 drop policy if exists "asset_categories_delete_admin" on public.asset_categories;
 create policy "asset_categories_delete_admin" on public.asset_categories
-  for delete using (public.is_admin());
+  for delete using (public.is_fleet_staff());
 
+-- Assets stay readable by every signed-in user, unlike the rest of this
+-- section — the /report-issue asset picker and the employee-facing
+-- /maintenance-due list both need it. Writes are fleet-staff only.
 drop policy if exists "assets_select_authenticated" on public.assets;
 create policy "assets_select_authenticated" on public.assets
   for select using (auth.uid() is not null);
 
 drop policy if exists "assets_insert_admin" on public.assets;
 create policy "assets_insert_admin" on public.assets
-  for insert with check (public.is_admin());
+  for insert with check (public.is_fleet_staff());
 
 drop policy if exists "assets_update_admin" on public.assets;
 create policy "assets_update_admin" on public.assets
-  for update using (public.is_admin());
+  for update using (public.is_fleet_staff());
 
 drop policy if exists "assets_delete_admin" on public.assets;
 create policy "assets_delete_admin" on public.assets
-  for delete using (public.is_admin());
+  for delete using (public.is_fleet_staff());
 
--- Any signed-in employee can log a meter reading (they're the ones driving
--- the truck/running the excavator) — the backwards-reading + admin-override
--- rule is enforced in enforce_meter_reading_order() above, not here.
+-- Meter readings are fleet-staff only now (previously any signed-in user
+-- could log one) — logging equipment meters is "fleet info" in the sense
+-- the employee-restriction request meant, so this moved alongside asset
+-- writes. with check still pins recorded_by_id to the caller.
 drop policy if exists "meter_readings_select_authenticated" on public.meter_readings;
-create policy "meter_readings_select_authenticated" on public.meter_readings
-  for select using (auth.uid() is not null);
+drop policy if exists "meter_readings_select_fleet_staff" on public.meter_readings;
+create policy "meter_readings_select_fleet_staff" on public.meter_readings
+  for select using (public.is_fleet_staff());
 
--- with check also pins recorded_by_id to the caller — without it, a
--- crafted direct API call could log a reading while attributing it to
--- someone else (same class of gap the profiles role-escalation trigger
--- above was written to close: RLS is the real boundary, so it needs to
--- enforce this, not just addMeterReading's server-side default).
 drop policy if exists "meter_readings_insert_authenticated" on public.meter_readings;
-create policy "meter_readings_insert_authenticated" on public.meter_readings
-  for insert with check (auth.uid() is not null and recorded_by_id = auth.uid());
+drop policy if exists "meter_readings_insert_fleet_staff" on public.meter_readings;
+create policy "meter_readings_insert_fleet_staff" on public.meter_readings
+  for insert with check (public.is_fleet_staff() and recorded_by_id = auth.uid());
 
--- Anyone can report a ticket; the reporter can keep editing it while still
--- "open", after which only an admin can (mirrors the expenses/time-off
--- "own + pending" pattern). Status changes normally go through an admin —
--- acknowledgment is the one exception, handled by acknowledge_ticket()
--- above so any employee can flag a 911 ticket as seen.
+-- Anyone can report a ticket, and can see their own reported tickets
+-- (needed for /my-tickets); full visibility into every ticket is
+-- fleet-staff only. The reporter can keep editing their own ticket while
+-- still "open" (that's their own submission, not "fleet info"), after
+-- which only fleet staff can. Status changes normally go through fleet
+-- staff — acknowledgment is the one exception, handled by
+-- acknowledge_ticket() above so anyone can flag a 911 ticket as seen.
 drop policy if exists "service_tickets_select_authenticated" on public.service_tickets;
-create policy "service_tickets_select_authenticated" on public.service_tickets
-  for select using (auth.uid() is not null);
+drop policy if exists "service_tickets_select_own_or_fleet_staff" on public.service_tickets;
+create policy "service_tickets_select_own_or_fleet_staff" on public.service_tickets
+  for select using (reported_by_id = auth.uid() or public.is_fleet_staff());
 
 drop policy if exists "service_tickets_insert_own" on public.service_tickets;
 create policy "service_tickets_insert_own" on public.service_tickets
@@ -1066,74 +1133,80 @@ create policy "service_tickets_insert_own" on public.service_tickets
 drop policy if exists "service_tickets_update_own_open_or_admin" on public.service_tickets;
 create policy "service_tickets_update_own_open_or_admin" on public.service_tickets
   for update using (
-    (reported_by_id = auth.uid() and status = 'open') or public.is_admin()
+    (reported_by_id = auth.uid() and status = 'open') or public.is_fleet_staff()
   );
 
 drop policy if exists "service_tickets_delete_own_open_or_admin" on public.service_tickets;
 create policy "service_tickets_delete_own_open_or_admin" on public.service_tickets
   for delete using (
-    (reported_by_id = auth.uid() and status = 'open') or public.is_admin()
+    (reported_by_id = auth.uid() and status = 'open') or public.is_fleet_staff()
   );
 
 drop policy if exists "ticket_status_history_select_authenticated" on public.ticket_status_history;
-create policy "ticket_status_history_select_authenticated" on public.ticket_status_history
-  for select using (auth.uid() is not null);
+drop policy if exists "ticket_status_history_select_fleet_staff" on public.ticket_status_history;
+create policy "ticket_status_history_select_fleet_staff" on public.ticket_status_history
+  for select using (public.is_fleet_staff());
 
 drop policy if exists "ticket_comments_select_authenticated" on public.ticket_comments;
-create policy "ticket_comments_select_authenticated" on public.ticket_comments
-  for select using (auth.uid() is not null);
+drop policy if exists "ticket_comments_select_fleet_staff" on public.ticket_comments;
+create policy "ticket_comments_select_fleet_staff" on public.ticket_comments
+  for select using (public.is_fleet_staff());
 
 drop policy if exists "ticket_comments_insert_own" on public.ticket_comments;
-create policy "ticket_comments_insert_own" on public.ticket_comments
-  for insert with check (user_id = auth.uid());
+drop policy if exists "ticket_comments_insert_fleet_staff" on public.ticket_comments;
+create policy "ticket_comments_insert_fleet_staff" on public.ticket_comments
+  for insert with check (public.is_fleet_staff() and user_id = auth.uid());
 
 drop policy if exists "ticket_comments_delete_own_or_admin" on public.ticket_comments;
 create policy "ticket_comments_delete_own_or_admin" on public.ticket_comments
-  for delete using (user_id = auth.uid() or public.is_admin());
+  for delete using (user_id = auth.uid() or public.is_fleet_staff());
 
 drop policy if exists "maintenance_types_select_authenticated" on public.maintenance_types;
-create policy "maintenance_types_select_authenticated" on public.maintenance_types
-  for select using (auth.uid() is not null);
+drop policy if exists "maintenance_types_select_fleet_staff" on public.maintenance_types;
+create policy "maintenance_types_select_fleet_staff" on public.maintenance_types
+  for select using (public.is_fleet_staff());
 
 drop policy if exists "maintenance_types_insert_admin" on public.maintenance_types;
 create policy "maintenance_types_insert_admin" on public.maintenance_types
-  for insert with check (public.is_admin());
+  for insert with check (public.is_fleet_staff());
 
 drop policy if exists "maintenance_types_delete_admin" on public.maintenance_types;
 create policy "maintenance_types_delete_admin" on public.maintenance_types
-  for delete using (public.is_admin());
+  for delete using (public.is_fleet_staff());
 
--- Configuring a schedule (what's tracked, how often) is admin-only, same
--- as editing the asset itself. Anyone can read it — it drives the
--- overdue/due-soon coloring on the assets list, which is shared-crew
--- visibility like everything else in this section.
+-- Configuring a schedule (what's tracked, how often) is fleet-staff only,
+-- same as editing the asset itself. Unlike the rest of this section,
+-- everyone signed in can read it — it's what drives the employee-facing
+-- /maintenance-due list, and the overdue/due-soon coloring on the
+-- fleet-staff assets list.
 drop policy if exists "maintenance_schedules_select_authenticated" on public.maintenance_schedules;
 create policy "maintenance_schedules_select_authenticated" on public.maintenance_schedules
   for select using (auth.uid() is not null);
 
 drop policy if exists "maintenance_schedules_insert_admin" on public.maintenance_schedules;
 create policy "maintenance_schedules_insert_admin" on public.maintenance_schedules
-  for insert with check (public.is_admin());
+  for insert with check (public.is_fleet_staff());
 
 drop policy if exists "maintenance_schedules_update_admin" on public.maintenance_schedules;
 create policy "maintenance_schedules_update_admin" on public.maintenance_schedules
-  for update using (public.is_admin());
+  for update using (public.is_fleet_staff());
 
 drop policy if exists "maintenance_schedules_delete_admin" on public.maintenance_schedules;
 create policy "maintenance_schedules_delete_admin" on public.maintenance_schedules
-  for delete using (public.is_admin());
+  for delete using (public.is_fleet_staff());
 
--- Logging that service was performed is open to any signed-in user (same
--- reasoning as meter_readings: the person who actually did the oil change
--- is often not an admin). with check pins performed_by_id to the caller —
--- same spoofing gap the meter_readings policy above was fixed for.
+-- Logging that service was performed is fleet-staff only now (previously
+-- any signed-in user could log one) — same reasoning as the meter_readings
+-- change above. with check still pins performed_by_id to the caller.
 drop policy if exists "maintenance_records_select_authenticated" on public.maintenance_records;
-create policy "maintenance_records_select_authenticated" on public.maintenance_records
-  for select using (auth.uid() is not null);
+drop policy if exists "maintenance_records_select_fleet_staff" on public.maintenance_records;
+create policy "maintenance_records_select_fleet_staff" on public.maintenance_records
+  for select using (public.is_fleet_staff());
 
 drop policy if exists "maintenance_records_insert_authenticated" on public.maintenance_records;
-create policy "maintenance_records_insert_authenticated" on public.maintenance_records
-  for insert with check (auth.uid() is not null and performed_by_id = auth.uid());
+drop policy if exists "maintenance_records_insert_fleet_staff" on public.maintenance_records;
+create policy "maintenance_records_insert_fleet_staff" on public.maintenance_records
+  for insert with check (public.is_fleet_staff() and performed_by_id = auth.uid());
 
 -- Notifications are strictly private to their recipient — no admin
 -- override, unlike everything else in this file (an admin doesn't need to
@@ -1175,23 +1248,24 @@ create policy "receipts_delete_own_or_admin" on storage.objects
 
 -- ============================================================
 -- STORAGE — private "asset-photos" bucket, one folder per asset (folder
--- name = asset id). Unlike receipts (one folder per user), any signed-in
--- user can upload into any asset's folder — a photo is often taken by
--- whoever's using the equipment that day, not just an admin — but only an
--- admin can remove one.
+-- name = asset id). Fleet-staff only, full stop — employees have no UI
+-- that uploads or views an asset photo, unlike assets/maintenance_schedules
+-- above which they still need read access to.
 -- ============================================================
 insert into storage.buckets (id, name, public)
 values ('asset-photos', 'asset-photos', false)
 on conflict (id) do nothing;
 
 drop policy if exists "asset_photos_insert_authenticated" on storage.objects;
-create policy "asset_photos_insert_authenticated" on storage.objects
-  for insert with check (bucket_id = 'asset-photos' and auth.uid() is not null);
+drop policy if exists "asset_photos_insert_fleet_staff" on storage.objects;
+create policy "asset_photos_insert_fleet_staff" on storage.objects
+  for insert with check (bucket_id = 'asset-photos' and public.is_fleet_staff());
 
 drop policy if exists "asset_photos_select_authenticated" on storage.objects;
-create policy "asset_photos_select_authenticated" on storage.objects
-  for select using (bucket_id = 'asset-photos' and auth.uid() is not null);
+drop policy if exists "asset_photos_select_fleet_staff" on storage.objects;
+create policy "asset_photos_select_fleet_staff" on storage.objects
+  for select using (bucket_id = 'asset-photos' and public.is_fleet_staff());
 
 drop policy if exists "asset_photos_delete_admin" on storage.objects;
 create policy "asset_photos_delete_admin" on storage.objects
-  for delete using (bucket_id = 'asset-photos' and public.is_admin());
+  for delete using (bucket_id = 'asset-photos' and public.is_fleet_staff());

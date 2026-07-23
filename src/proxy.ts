@@ -5,8 +5,9 @@ import { NextResponse, type NextRequest } from "next/server";
 //   1. Keep the Supabase auth session cookie fresh (required by @supabase/ssr).
 //   2. Enforce route access: signed-out users can only reach /login, /signup,
 //      /forgot-password, and /reset-password; signed-in employees can't reach
-//      /admin/*; signed-in users are redirected away from /login and /signup
-//      to their home page.
+//      /admin/* or /fleet/* (fleet-staff only — employees use /report-issue,
+//      /my-tickets, /maintenance-due instead); signed-in users are redirected
+//      away from /login and /signup to their home page.
 //
 // /reset-password is deliberately NOT in that last redirect-away group: the
 // password-recovery link Supabase emails establishes the user's session via
@@ -46,6 +47,7 @@ export async function proxy(request: NextRequest) {
   const isPublicAuthPage =
     isLoginOrSignup || path === "/forgot-password" || path === "/reset-password";
   const isAdminPage = path.startsWith("/admin");
+  const isFleetPage = path.startsWith("/fleet");
 
   if (!user && !isPublicAuthPage) {
     const url = request.nextUrl.clone();
@@ -69,6 +71,24 @@ export async function proxy(request: NextRequest) {
     if (profile?.role !== "admin") {
       const url = request.nextUrl.clone();
       url.pathname = "/submit";
+      return NextResponse.redirect(url);
+    }
+  }
+
+  // /fleet/* is fleet-staff only (admin or mechanic). An employee gets
+  // bounced to /report-issue — the one Fleet & Equipment action they still
+  // have (filing a ticket) — rather than /submit, since that's the closest
+  // equivalent to where they were headed.
+  if (user && isFleetPage) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+
+    if (profile?.role !== "admin" && profile?.role !== "mechanic") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/report-issue";
       return NextResponse.redirect(url);
     }
   }
