@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { logout } from "@/lib/actions/auth";
 import NavDropdown from "@/components/NavDropdown";
+import NotificationBell from "@/components/NotificationBell";
+import { createClient } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
@@ -18,8 +20,20 @@ function Divider() {
   return <div className="my-1 border-t border-slate-100" />;
 }
 
-export default function Navbar({ profile }: { profile: Profile }) {
+// Async because it fetches the caller's own notifications here rather than
+// making every page that renders <Navbar> (nine and counting) do it — the
+// only call sites are Server Components, so an async component is a drop-in
+// replacement. Notifications are strictly own-row (see notifications RLS in
+// schema.sql), so this can't leak another user's data.
+export default async function Navbar({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === "admin";
+
+  const supabase = await createClient();
+  const { data: notifications } = await supabase
+    .from("notifications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(20);
 
   return (
     <header className="border-b border-slate-200 bg-white">
@@ -52,6 +66,13 @@ export default function Navbar({ profile }: { profile: Profile }) {
                 <Divider />
                 <NavLink href="/admin/employees">Employee directory</NavLink>
               </NavDropdown>
+              <NavDropdown label="Fleet & Equipment">
+                <NavLink href="/fleet">Dashboard</NavLink>
+                <NavLink href="/fleet/assets">Assets</NavLink>
+                <NavLink href="/fleet/assets/new">New asset</NavLink>
+                <Divider />
+                <NavLink href="/fleet/tickets">Service tickets</NavLink>
+              </NavDropdown>
             </nav>
           ) : (
             // Employees only ever see their own four pages — still short
@@ -69,10 +90,14 @@ export default function Navbar({ profile }: { profile: Profile }) {
               <Link href="/profile" className="text-slate-600 hover:text-slate-900">
                 My profile
               </Link>
+              <Link href="/fleet" className="text-slate-600 hover:text-slate-900">
+                Fleet & Equipment
+              </Link>
             </nav>
           )}
         </div>
         <div className="flex items-center gap-3 text-sm text-slate-500">
+          <NotificationBell notifications={notifications ?? []} />
           <span>
             {profile.full_name}
             {isAdmin && (

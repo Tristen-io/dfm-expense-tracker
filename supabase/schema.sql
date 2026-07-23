@@ -325,6 +325,429 @@ $$;
 grant execute on function public.acknowledge_write_up(uuid) to authenticated;
 
 -- ============================================================
+-- FLEET & EQUIPMENT — Phase 1 (asset registry, meter readings, service
+-- tickets, notifications). Deliberately scoped down from the full
+-- CMMS ask (no PM schedules/health-color engine/inspections yet — those
+-- are phases 2/3) so this lands as something reviewable and testable on
+-- its own. No new roles: visibility follows the existing employee/admin
+-- split, same as every other table in this file.
+-- ============================================================
+
+-- ASSET CATEGORIES — admin-curated suggestions, same free-text-with-
+-- curated-list pattern as vendors/jobs (assets.category stays free text,
+-- not a foreign key, so an asset can be added before its category is).
+create table if not exists public.asset_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists asset_categories_name_lower_idx
+  on public.asset_categories (lower(name));
+
+-- ASSETS
+create table if not exists public.assets (
+  id uuid primary key default gen_random_uuid(),
+  asset_number text not null,
+  name text not null,
+  category text,
+  make text,
+  model text,
+  year int,
+  vin_or_serial text,
+  status text not null default 'active',
+  -- What kind of meter this asset tracks, if any — drives which unit
+  -- meter_readings.reading_type is expected to use and whether the "add a
+  -- reading" UI even shows up on the asset's profile page.
+  meter_type text not null default 'mileage',
+  -- Denormalized latest reading, kept in sync by apply_meter_reading()
+  -- below whenever a new meter_readings row lands — same "store the
+  -- current value, don't recompute it from history on every read" choice
+  -- as expenses.reviewed_by_name. meter_readings is still the source of
+  -- truth/audit trail.
+  current_meter_value numeric(12, 1),
+  assigned_to_id uuid references public.profiles(id) on delete set null,
+  assigned_to_name text,
+  location text,
+  purchase_date date,
+  notes text,
+  photo_path text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.assets drop constraint if exists assets_status_check;
+alter table public.assets add constraint assets_status_check check (
+  status in ('active', 'out_of_service', 'retired')
+);
+
+alter table public.assets drop constraint if exists assets_meter_type_check;
+alter table public.assets add constraint assets_meter_type_check check (
+  meter_type in ('mileage', 'hours', 'none')
+);
+
+alter table public.assets drop constraint if exists assets_year_check;
+alter table public.assets add constraint assets_year_check check (
+  year is null or (year between 1900 and 2100)
+);
+
+create unique index if not exists assets_asset_number_lower_idx
+  on public.assets (lower(asset_number));
+create index if not exists assets_status_idx on public.assets (status);
+create index if not exists assets_category_idx on public.assets (category);
+
+drop trigger if exists assets_set_updated_at on public.assets;
+create trigger assets_set_updated_at
+  before update on public.assets
+  for each row execute function public.set_updated_at();
+
+-- METER READINGS — mileage/engine-hour history per asset. A backwards
+-- reading (odometer rolled back, hour meter replaced, fat-fingered entry)
+-- is rejected unless is_override is set, which itself is only allowed for
+-- an admin and requires a reason — see enforce_meter_reading_order() below.
+create table if not exists public.meter_readings (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.assets(id) on delete cascade,
+  reading_type text not null,
+  value numeric(12, 1) not null,
+  recorded_by_id uuid references public.profiles(id) on delete set null,
+  recorded_by_name text not null,
+  is_override boolean not null default false,
+  override_reason text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.meter_readings drop constraint if exists meter_readings_reading_type_check;
+alter table public.meter_readings add constraint meter_readings_reading_type_check check (
+  reading_type in ('mileage', 'hours')
+);
+
+alter table public.meter_readings drop constraint if exists meter_readings_value_check;
+alter table public.meter_readings add constraint meter_readings_value_check check (value >= 0);
+
+create index if not exists meter_readings_asset_id_idx on public.meter_readings (asset_id);
+create index if not exists meter_readings_created_at_idx on public.meter_readings (created_at);
+
+-- Rejects a reading lower than the latest one on file for the same
+-- asset+reading_type unless the caller is an admin, is_override is set,
+-- and a reason was given. security definer so it can read across all of
+-- meter_readings regardless of the caller's own RLS visibility.
+create or replace function public.enforce_meter_reading_order()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  latest numeric;
+begin
+  select value into latest from public.meter_readings
+    where asset_id = new.asset_id and reading_type = new.reading_type
+    order by created_at desc, id desc
+    limit 1;
+
+  if latest is not null and new.value < latest then
+    if not new.is_override then
+      raise exception
+        'New reading (%) is less than the latest recorded reading (%). An admin can override this with a reason.',
+        new.value, latest;
+    end if;
+    if not public.is_admin() then
+      raise exception 'Only an admin can override a backwards meter reading.';
+    end if;
+    if new.override_reason is null or btrim(new.override_reason) = '' then
+      raise exception 'An override reason is required when correcting a backwards reading.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists meter_readings_enforce_order on public.meter_readings;
+create trigger meter_readings_enforce_order
+  before insert on public.meter_readings
+  for each row execute function public.enforce_meter_reading_order();
+
+-- Keeps assets.current_meter_value in sync. Only applies when the reading's
+-- type matches the asset's configured meter_type, so a stray reading of the
+-- wrong type (shouldn't happen via the UI, but the table itself doesn't
+-- forbid it) never overwrites the displayed current value with a mismatched
+-- unit.
+create or replace function public.apply_meter_reading()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.assets
+  set current_meter_value = new.value, updated_at = now()
+  where id = new.asset_id and meter_type = new.reading_type;
+  return new;
+end;
+$$;
+
+drop trigger if exists meter_readings_apply on public.meter_readings;
+create trigger meter_readings_apply
+  after insert on public.meter_readings
+  for each row execute function public.apply_meter_reading();
+
+-- SERVICE TICKETS
+create table if not exists public.service_tickets (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.assets(id) on delete cascade,
+  -- Denormalized snapshot of the asset's number/name at ticket-creation
+  -- time, same "copy the display fields, don't join" convention as
+  -- employee_name elsewhere in this file — lets ticket lists render
+  -- without joining assets, and keeps showing something sensible even if
+  -- the asset is later renamed.
+  asset_number text not null,
+  asset_name text not null,
+  title text not null,
+  description text not null,
+  priority text not null default 'medium',
+  status text not null default 'open',
+  reported_by_id uuid references public.profiles(id) on delete set null,
+  reported_by_name text not null,
+  assigned_to_id uuid references public.profiles(id) on delete set null,
+  assigned_to_name text,
+  -- "Someone has seen this" tracking, mainly for 911-priority tickets —
+  -- set via the acknowledge_ticket() security-definer function below (any
+  -- signed-in user, not just admins/the assignee, since the point of a 911
+  -- ticket is that whoever notices it first can flag "I've seen this").
+  acknowledged_by_name text,
+  acknowledged_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.service_tickets drop constraint if exists service_tickets_priority_check;
+alter table public.service_tickets add constraint service_tickets_priority_check check (
+  priority in ('low', 'medium', 'high', '911')
+);
+
+alter table public.service_tickets drop constraint if exists service_tickets_status_check;
+alter table public.service_tickets add constraint service_tickets_status_check check (
+  status in ('open', 'in_progress', 'on_hold', 'completed', 'cancelled')
+);
+
+create index if not exists service_tickets_asset_id_idx on public.service_tickets (asset_id);
+create index if not exists service_tickets_status_idx on public.service_tickets (status);
+create index if not exists service_tickets_priority_idx on public.service_tickets (priority);
+
+drop trigger if exists service_tickets_set_updated_at on public.service_tickets;
+create trigger service_tickets_set_updated_at
+  before update on public.service_tickets
+  for each row execute function public.set_updated_at();
+
+-- Stamps completed_at when a ticket moves into/out of "completed", so the
+-- timestamp doesn't need separate app-layer bookkeeping.
+create or replace function public.stamp_ticket_completed_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status = 'completed' and old.status <> 'completed' then
+    new.completed_at := now();
+  elsif new.status <> 'completed' and old.status = 'completed' then
+    new.completed_at := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists service_tickets_stamp_completed on public.service_tickets;
+create trigger service_tickets_stamp_completed
+  before update on public.service_tickets
+  for each row execute function public.stamp_ticket_completed_at();
+
+-- TICKET STATUS HISTORY — append-only audit trail, populated entirely by
+-- the trigger below (no app-layer insert policy needed, same "owner-only
+-- writes via a security-definer trigger" shape as how handle_new_user
+-- populates profiles).
+create table if not exists public.ticket_status_history (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references public.service_tickets(id) on delete cascade,
+  status text not null,
+  changed_by_name text not null,
+  note text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists ticket_status_history_ticket_id_idx
+  on public.ticket_status_history (ticket_id);
+
+create or replace function public.log_ticket_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.ticket_status_history (ticket_id, status, changed_by_name, note)
+    values (new.id, new.status, new.reported_by_name, 'Ticket created');
+  elsif tg_op = 'UPDATE' and new.status is distinct from old.status then
+    insert into public.ticket_status_history (ticket_id, status, changed_by_name)
+    values (
+      new.id,
+      new.status,
+      coalesce((select full_name from public.profiles where id = auth.uid()), 'Unknown')
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists service_tickets_log_status on public.service_tickets;
+create trigger service_tickets_log_status
+  after insert or update on public.service_tickets
+  for each row execute function public.log_ticket_status();
+
+-- TICKET COMMENTS
+create table if not exists public.ticket_comments (
+  id uuid primary key default gen_random_uuid(),
+  ticket_id uuid not null references public.service_tickets(id) on delete cascade,
+  user_id uuid references public.profiles(id) on delete set null,
+  author_name text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists ticket_comments_ticket_id_idx on public.ticket_comments (ticket_id);
+
+-- Lets any signed-in user acknowledge a ticket (not just an admin or the
+-- assignee — the point of 911-priority acknowledgment is "whoever sees
+-- this first flags that they've seen it"), without a generic UPDATE policy
+-- that would let any employee edit a ticket's title/description/priority.
+-- Same shape as acknowledge_write_up() above; only ever sets these two
+-- columns, and only once (no-ops if already acknowledged).
+create or replace function public.acknowledge_ticket(ticket_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.service_tickets
+  set acknowledged_by_name = coalesce((select full_name from public.profiles where id = auth.uid()), 'Unknown'),
+      acknowledged_at = now()
+  where id = ticket_id and acknowledged_at is null;
+end;
+$$;
+
+grant execute on function public.acknowledge_ticket(uuid) to authenticated;
+
+-- NOTIFICATIONS — in-app only for now. Shaped so an email/SMS channel can
+-- be layered on later (e.g. a delivered_at/channel column) without a
+-- rework: every notification is already a self-contained row with a type,
+-- title, body, and link, not something computed on the fly.
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null,
+  title text not null,
+  body text,
+  link_path text,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.notifications drop constraint if exists notifications_type_check;
+alter table public.notifications add constraint notifications_type_check check (
+  type in ('ticket_created', 'ticket_911', 'ticket_status_changed', 'meter_override')
+);
+
+create index if not exists notifications_user_id_idx on public.notifications (user_id);
+create index if not exists notifications_unread_idx on public.notifications (user_id, read_at);
+
+-- Fans a new ticket out to every admin. Runs as security definer so it can
+-- insert on behalf of every admin regardless of who filed the ticket.
+create or replace function public.notify_new_ticket()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.notifications (user_id, type, title, body, link_path)
+  select
+    p.id,
+    case when new.priority = '911' then 'ticket_911' else 'ticket_created' end,
+    case
+      when new.priority = '911' then '911 priority ticket: ' || new.title
+      else 'New service ticket: ' || new.title
+    end,
+    new.reported_by_name || ' reported an issue.',
+    '/fleet/tickets/' || new.id
+  from public.profiles p
+  where p.role = 'admin';
+  return new;
+end;
+$$;
+
+drop trigger if exists service_tickets_notify_new on public.service_tickets;
+create trigger service_tickets_notify_new
+  after insert on public.service_tickets
+  for each row execute function public.notify_new_ticket();
+
+-- Notifies whoever reported the ticket when its status changes (unless
+-- they're the one who changed it).
+create or replace function public.notify_ticket_status_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.status is distinct from old.status
+     and new.reported_by_id is not null
+     and new.reported_by_id <> auth.uid() then
+    insert into public.notifications (user_id, type, title, body, link_path)
+    values (
+      new.reported_by_id,
+      'ticket_status_changed',
+      'Ticket updated: ' || new.title,
+      'Status changed to ' || replace(new.status, '_', ' ') || '.',
+      '/fleet/tickets/' || new.id
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists service_tickets_notify_status on public.service_tickets;
+create trigger service_tickets_notify_status
+  after update of status on public.service_tickets
+  for each row execute function public.notify_ticket_status_change();
+
+-- Marks one notification (or, with null, all of the caller's notifications)
+-- read. security definer + the explicit user_id = auth.uid() check is the
+-- same "narrow capability, not a generic UPDATE policy" shape used
+-- elsewhere in this file, though here a generic own-row UPDATE policy would
+-- have been just as safe (the row has no other caller-facing mutable
+-- field) — kept as a function anyway for consistency with the rest of this
+-- section and so "mark all read" doesn't need N round trips.
+create or replace function public.mark_notifications_read(notification_id uuid default null)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.notifications
+  set read_at = now()
+  where user_id = auth.uid()
+    and read_at is null
+    and (notification_id is null or id = notification_id);
+end;
+$$;
+
+grant execute on function public.mark_notifications_read(uuid) to authenticated;
+
+-- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
 alter table public.profiles enable row level security;
@@ -333,6 +756,13 @@ alter table public.vendors enable row level security;
 alter table public.jobs enable row level security;
 alter table public.time_off_requests enable row level security;
 alter table public.write_ups enable row level security;
+alter table public.asset_categories enable row level security;
+alter table public.assets enable row level security;
+alter table public.meter_readings enable row level security;
+alter table public.service_tickets enable row level security;
+alter table public.ticket_status_history enable row level security;
+alter table public.ticket_comments enable row level security;
+alter table public.notifications enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
@@ -433,6 +863,106 @@ drop policy if exists "write_ups_delete_admin" on public.write_ups;
 create policy "write_ups_delete_admin" on public.write_ups
   for delete using (public.is_admin());
 
+-- Fleet & equipment is shared crew visibility (like vendors/jobs), not
+-- per-user (like expenses/time off) — everyone signed in can see the
+-- asset registry and ticket queue; only admins curate the asset registry
+-- itself.
+drop policy if exists "asset_categories_select_authenticated" on public.asset_categories;
+create policy "asset_categories_select_authenticated" on public.asset_categories
+  for select using (auth.uid() is not null);
+
+drop policy if exists "asset_categories_insert_admin" on public.asset_categories;
+create policy "asset_categories_insert_admin" on public.asset_categories
+  for insert with check (public.is_admin());
+
+drop policy if exists "asset_categories_delete_admin" on public.asset_categories;
+create policy "asset_categories_delete_admin" on public.asset_categories
+  for delete using (public.is_admin());
+
+drop policy if exists "assets_select_authenticated" on public.assets;
+create policy "assets_select_authenticated" on public.assets
+  for select using (auth.uid() is not null);
+
+drop policy if exists "assets_insert_admin" on public.assets;
+create policy "assets_insert_admin" on public.assets
+  for insert with check (public.is_admin());
+
+drop policy if exists "assets_update_admin" on public.assets;
+create policy "assets_update_admin" on public.assets
+  for update using (public.is_admin());
+
+drop policy if exists "assets_delete_admin" on public.assets;
+create policy "assets_delete_admin" on public.assets
+  for delete using (public.is_admin());
+
+-- Any signed-in employee can log a meter reading (they're the ones driving
+-- the truck/running the excavator) — the backwards-reading + admin-override
+-- rule is enforced in enforce_meter_reading_order() above, not here.
+drop policy if exists "meter_readings_select_authenticated" on public.meter_readings;
+create policy "meter_readings_select_authenticated" on public.meter_readings
+  for select using (auth.uid() is not null);
+
+-- with check also pins recorded_by_id to the caller — without it, a
+-- crafted direct API call could log a reading while attributing it to
+-- someone else (same class of gap the profiles role-escalation trigger
+-- above was written to close: RLS is the real boundary, so it needs to
+-- enforce this, not just addMeterReading's server-side default).
+drop policy if exists "meter_readings_insert_authenticated" on public.meter_readings;
+create policy "meter_readings_insert_authenticated" on public.meter_readings
+  for insert with check (auth.uid() is not null and recorded_by_id = auth.uid());
+
+-- Anyone can report a ticket; the reporter can keep editing it while still
+-- "open", after which only an admin can (mirrors the expenses/time-off
+-- "own + pending" pattern). Status changes normally go through an admin —
+-- acknowledgment is the one exception, handled by acknowledge_ticket()
+-- above so any employee can flag a 911 ticket as seen.
+drop policy if exists "service_tickets_select_authenticated" on public.service_tickets;
+create policy "service_tickets_select_authenticated" on public.service_tickets
+  for select using (auth.uid() is not null);
+
+drop policy if exists "service_tickets_insert_own" on public.service_tickets;
+create policy "service_tickets_insert_own" on public.service_tickets
+  for insert with check (reported_by_id = auth.uid());
+
+drop policy if exists "service_tickets_update_own_open_or_admin" on public.service_tickets;
+create policy "service_tickets_update_own_open_or_admin" on public.service_tickets
+  for update using (
+    (reported_by_id = auth.uid() and status = 'open') or public.is_admin()
+  );
+
+drop policy if exists "service_tickets_delete_own_open_or_admin" on public.service_tickets;
+create policy "service_tickets_delete_own_open_or_admin" on public.service_tickets
+  for delete using (
+    (reported_by_id = auth.uid() and status = 'open') or public.is_admin()
+  );
+
+drop policy if exists "ticket_status_history_select_authenticated" on public.ticket_status_history;
+create policy "ticket_status_history_select_authenticated" on public.ticket_status_history
+  for select using (auth.uid() is not null);
+
+drop policy if exists "ticket_comments_select_authenticated" on public.ticket_comments;
+create policy "ticket_comments_select_authenticated" on public.ticket_comments
+  for select using (auth.uid() is not null);
+
+drop policy if exists "ticket_comments_insert_own" on public.ticket_comments;
+create policy "ticket_comments_insert_own" on public.ticket_comments
+  for insert with check (user_id = auth.uid());
+
+drop policy if exists "ticket_comments_delete_own_or_admin" on public.ticket_comments;
+create policy "ticket_comments_delete_own_or_admin" on public.ticket_comments
+  for delete using (user_id = auth.uid() or public.is_admin());
+
+-- Notifications are strictly private to their recipient — no admin
+-- override, unlike everything else in this file (an admin doesn't need to
+-- read another user's notification feed).
+drop policy if exists "notifications_select_own" on public.notifications;
+create policy "notifications_select_own" on public.notifications
+  for select using (user_id = auth.uid());
+
+drop policy if exists "notifications_delete_own" on public.notifications;
+create policy "notifications_delete_own" on public.notifications
+  for delete using (user_id = auth.uid());
+
 -- ============================================================
 -- STORAGE — private "receipts" bucket, one folder per user (folder name = user id)
 -- ============================================================
@@ -459,3 +989,26 @@ create policy "receipts_delete_own_or_admin" on storage.objects
     bucket_id = 'receipts'
     and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin())
   );
+
+-- ============================================================
+-- STORAGE — private "asset-photos" bucket, one folder per asset (folder
+-- name = asset id). Unlike receipts (one folder per user), any signed-in
+-- user can upload into any asset's folder — a photo is often taken by
+-- whoever's using the equipment that day, not just an admin — but only an
+-- admin can remove one.
+-- ============================================================
+insert into storage.buckets (id, name, public)
+values ('asset-photos', 'asset-photos', false)
+on conflict (id) do nothing;
+
+drop policy if exists "asset_photos_insert_authenticated" on storage.objects;
+create policy "asset_photos_insert_authenticated" on storage.objects
+  for insert with check (bucket_id = 'asset-photos' and auth.uid() is not null);
+
+drop policy if exists "asset_photos_select_authenticated" on storage.objects;
+create policy "asset_photos_select_authenticated" on storage.objects
+  for select using (bucket_id = 'asset-photos' and auth.uid() is not null);
+
+drop policy if exists "asset_photos_delete_admin" on storage.objects;
+create policy "asset_photos_delete_admin" on storage.objects
+  for delete using (bucket_id = 'asset-photos' and public.is_admin());

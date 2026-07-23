@@ -231,6 +231,208 @@ export type ExpenseInsert = {
   updated_at?: string;
 };
 
+// ============================================================
+// FLEET & EQUIPMENT — Phase 1 (asset registry, meter readings, service
+// tickets, notifications). See supabase/schema.sql for the matching
+// tables/constraints.
+// ============================================================
+
+export type AssetStatus = "active" | "out_of_service" | "retired";
+
+export type MeterType = "mileage" | "hours" | "none";
+
+export const METER_TYPES: MeterType[] = ["mileage", "hours", "none"];
+
+export const METER_TYPE_LABELS: Record<MeterType, string> = {
+  mileage: "Mileage",
+  hours: "Engine hours",
+  none: "Not tracked",
+};
+
+export type AssetCategory = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
+export type Asset = {
+  id: string;
+  asset_number: string;
+  name: string;
+  category: string | null;
+  make: string | null;
+  model: string | null;
+  year: number | null;
+  vin_or_serial: string | null;
+  status: AssetStatus;
+  meter_type: MeterType;
+  // Denormalized latest meter_readings value for this asset — kept in sync
+  // by the apply_meter_reading() trigger, not recomputed on read.
+  current_meter_value: number | null;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  location: string | null;
+  purchase_date: string | null; // YYYY-MM-DD
+  notes: string | null;
+  photo_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MeterReadingType = "mileage" | "hours";
+
+export type MeterReading = {
+  id: string;
+  asset_id: string;
+  reading_type: MeterReadingType;
+  value: number;
+  recorded_by_id: string | null;
+  recorded_by_name: string;
+  is_override: boolean;
+  override_reason: string | null;
+  created_at: string;
+};
+
+export type TicketPriority = "low" | "medium" | "high" | "911";
+
+export const TICKET_PRIORITIES: TicketPriority[] = ["low", "medium", "high", "911"];
+
+export type TicketStatus = "open" | "in_progress" | "on_hold" | "completed" | "cancelled";
+
+export const TICKET_STATUSES: TicketStatus[] = [
+  "open",
+  "in_progress",
+  "on_hold",
+  "completed",
+  "cancelled",
+];
+
+export type ServiceTicket = {
+  id: string;
+  asset_id: string;
+  // Denormalized snapshot of the asset's number/name at creation time —
+  // see supabase/schema.sql for why (avoids a join for ticket lists).
+  asset_number: string;
+  asset_name: string;
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  status: TicketStatus;
+  reported_by_id: string | null;
+  reported_by_name: string;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  acknowledged_by_name: string | null;
+  acknowledged_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketStatusHistoryEntry = {
+  id: string;
+  ticket_id: string;
+  status: TicketStatus;
+  changed_by_name: string;
+  note: string | null;
+  created_at: string;
+};
+
+export type TicketComment = {
+  id: string;
+  ticket_id: string;
+  user_id: string | null;
+  author_name: string;
+  body: string;
+  created_at: string;
+};
+
+export type NotificationType =
+  | "ticket_created"
+  | "ticket_911"
+  | "ticket_status_changed"
+  | "meter_override";
+
+export type Notification = {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  body: string | null;
+  link_path: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type AssetCategoryInsert = {
+  name: string;
+  id?: string;
+  created_at?: string;
+};
+
+export type AssetInsert = {
+  asset_number: string;
+  name: string;
+  category?: string | null;
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+  vin_or_serial?: string | null;
+  status?: AssetStatus;
+  meter_type?: MeterType;
+  current_meter_value?: number | null;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string | null;
+  location?: string | null;
+  purchase_date?: string | null;
+  notes?: string | null;
+  photo_path?: string | null;
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MeterReadingInsert = {
+  asset_id: string;
+  reading_type: MeterReadingType;
+  value: number;
+  recorded_by_id?: string | null;
+  recorded_by_name: string;
+  is_override?: boolean;
+  override_reason?: string | null;
+  id?: string;
+  created_at?: string;
+};
+
+export type ServiceTicketInsert = {
+  asset_id: string;
+  asset_number: string;
+  asset_name: string;
+  title: string;
+  description: string;
+  priority?: TicketPriority;
+  status?: TicketStatus;
+  reported_by_id?: string | null;
+  reported_by_name: string;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string | null;
+  acknowledged_by_name?: string | null;
+  acknowledged_at?: string | null;
+  completed_at?: string | null;
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TicketCommentInsert = {
+  ticket_id: string;
+  user_id?: string | null;
+  author_name: string;
+  body: string;
+  id?: string;
+  created_at?: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -270,11 +472,64 @@ export type Database = {
         Update: Partial<WriteUp>;
         Relationships: [];
       };
+      asset_categories: {
+        Row: AssetCategory;
+        Insert: AssetCategoryInsert;
+        Update: Partial<AssetCategory>;
+        Relationships: [];
+      };
+      assets: {
+        Row: Asset;
+        Insert: AssetInsert;
+        Update: Partial<Asset>;
+        Relationships: [];
+      };
+      meter_readings: {
+        Row: MeterReading;
+        Insert: MeterReadingInsert;
+        Update: Partial<MeterReading>;
+        Relationships: [];
+      };
+      service_tickets: {
+        Row: ServiceTicket;
+        Insert: ServiceTicketInsert;
+        Update: Partial<ServiceTicket>;
+        Relationships: [];
+      };
+      ticket_status_history: {
+        Row: TicketStatusHistoryEntry;
+        Insert: Omit<TicketStatusHistoryEntry, "id" | "created_at"> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<TicketStatusHistoryEntry>;
+        Relationships: [];
+      };
+      ticket_comments: {
+        Row: TicketComment;
+        Insert: TicketCommentInsert;
+        Update: Partial<TicketComment>;
+        Relationships: [];
+      };
+      notifications: {
+        Row: Notification;
+        Insert: Omit<Notification, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: Partial<Notification>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
       acknowledge_write_up: {
         Args: { write_up_id: string };
+        Returns: void;
+      };
+      acknowledge_ticket: {
+        Args: { ticket_id: string };
+        Returns: void;
+      };
+      mark_notifications_read: {
+        Args: { notification_id?: string | null };
         Returns: void;
       };
     };
