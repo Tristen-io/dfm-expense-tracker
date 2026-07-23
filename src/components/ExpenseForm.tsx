@@ -8,6 +8,7 @@ import {
   MATERIAL_TYPES,
   MATERIAL_UNITS,
   type ExpenseCategory,
+  type Job,
   type MaterialType,
   type Vendor,
 } from "@/lib/types";
@@ -18,7 +19,12 @@ function todayLocalISODate() {
   return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
 }
 
-export default function ExpenseForm({ vendors }: { vendors: Vendor[] }) {
+// Keeps a phone camera's full-resolution photo from eating into Supabase's
+// free-tier storage faster than expected, and stops an obviously-wrong file
+// (a PDF renamed to .jpg, a video) from being attached as a "receipt photo."
+const MAX_RECEIPT_MB = 8;
+
+export default function ExpenseForm({ vendors, jobs }: { vendors: Vendor[]; jobs: Job[] }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [uploading, setUploading] = useState(false);
@@ -37,6 +43,17 @@ export default function ExpenseForm({ vendors }: { vendors: Vendor[] }) {
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Receipts must be a photo (JPG, PNG, HEIC, etc).");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_RECEIPT_MB * 1024 * 1024) {
+      setUploadError(`That photo is too large — please attach one under ${MAX_RECEIPT_MB}MB.`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
 
     setUploading(true);
     setUploadError(null);
@@ -144,9 +161,15 @@ export default function ExpenseForm({ vendors }: { vendors: Vendor[] }) {
           name="job_name"
           type="text"
           required
+          list="job-suggestions"
           placeholder="e.g. 4th & Main driveway pour"
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
         />
+        <datalist id="job-suggestions">
+          {jobs.map((j) => (
+            <option key={j.id} value={j.name} />
+          ))}
+        </datalist>
       </div>
 
       <div>

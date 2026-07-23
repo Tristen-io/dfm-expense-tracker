@@ -115,10 +115,15 @@ export async function createExpense(
   return { error: null, success: true };
 }
 
-// Admin-only: approve or flag an entry. RLS also enforces this server-side,
-// this check just gives a clean error message instead of a silent no-op.
+// Admin-only: approve or flag an entry. RLS technically also allows an
+// employee to touch their own pending row, so we check the role explicitly
+// here too — same defense-in-depth the CSV export route already does —
+// rather than relying solely on the UI hiding these buttons from employees.
 // The database itself rejects status = 'approved' while amount is null, so
 // this can't be used to sneak a priceless order through.
+//
+// Stamps who reviewed it and when (cleared back to null on reset to
+// "pending") so admins have a simple audit trail for approvals/flags.
 export async function updateExpenseStatus(id: string, status: ExpenseStatus) {
   const supabase = await createClient();
   const {
@@ -126,11 +131,68 @@ export async function updateExpenseStatus(id: string, status: ExpenseStatus) {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in.");
 
-  const { error } = await supabase.from("expenses").update({ status }).eq("id", id);
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") throw new Error("Only an admin can change an entry's status.");
+
+  const reviewed = status !== "pending";
+  const { error } = await supabase
+    .from("expenses")
+    .update({
+      status,
+      reviewed_by_name: reviewed ? profile.full_name : null,
+      reviewed_at: reviewed ? new Date().toISOString() : null,
+    })
+    .eq("id", id);
   if (error) throw new Error(error.message);
 
   revalidatePath("/admin/entries");
   revalidatePath("/admin/reports");
+  revalidatePath("/my-entries");
+}
+
+// Admin-only: approve several entries at once. Skips any without an amount
+// yet (a Postgres UPDATE is all-or-nothing, and the DB constraint would
+// reject the whole batch if even one row lacked a price) — the caller
+// should filter those out of the selection in the UI, but this is the
+// backstop. Returns how many were actually approved so the UI can tell the
+// admin if some were skipped.
+export async function bulkApproveExpenses(ids: string[]): Promise<{ approved: number }> {
+  if (ids.length === 0) return { approved: 0 };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in.");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") throw new Error("Only an admin can approve entries.");
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .update({
+      status: "approved",
+      reviewed_by_name: profile.full_name,
+      reviewed_at: new Date().toISOString(),
+    })
+    .in("id", ids)
+    .not("amount", "is", null)
+    .select("id");
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/entries");
+  revalidatePath("/admin/reports");
+  revalidatePath("/my-entries");
+  return { approved: data?.length ?? 0 };
 }
 
 // Fills in (or corrects) the dollar amount on an order placed before the

@@ -3,9 +3,18 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // Runs on every request. Two jobs:
 //   1. Keep the Supabase auth session cookie fresh (required by @supabase/ssr).
-//   2. Enforce route access: signed-out users can only reach /login and /signup;
-//      signed-in employees can't reach /admin/*; signed-in users are redirected
-//      away from /login and /signup to their home page.
+//   2. Enforce route access: signed-out users can only reach /login, /signup,
+//      /forgot-password, and /reset-password; signed-in employees can't reach
+//      /admin/*; signed-in users are redirected away from /login and /signup
+//      to their home page.
+//
+// /reset-password is deliberately NOT in that last redirect-away group: the
+// password-recovery link Supabase emails establishes the user's session via
+// client-side JS reading the URL (a hash fragment or ?code=, depending on
+// flow) *after* this proxy already ran, so a signed-in-looking request here
+// doesn't necessarily mean the recovery flow finished yet. Bouncing a
+// legitimately-signed-in admin away from it isn't harmful either — someone
+// changing their own password while signed in is a normal thing to allow.
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -33,16 +42,18 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const isAuthPage = path === "/login" || path === "/signup";
+  const isLoginOrSignup = path === "/login" || path === "/signup";
+  const isPublicAuthPage =
+    isLoginOrSignup || path === "/forgot-password" || path === "/reset-password";
   const isAdminPage = path.startsWith("/admin");
 
-  if (!user && !isAuthPage) {
+  if (!user && !isPublicAuthPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthPage) {
+  if (user && isLoginOrSignup) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

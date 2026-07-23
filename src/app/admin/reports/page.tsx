@@ -6,6 +6,7 @@ import {
   awaitingPriceCount,
   grandTotal,
   totalsByDay,
+  totalsByEmployee,
   totalsByJob,
   totalsByMonth,
   totalsByVendor,
@@ -120,6 +121,7 @@ export default async function ReportsPage({
         <TotalsTable title="By month" rows={totalsByMonth(rows)} />
         <TotalsTable title="By job / project" rows={totalsByJob(rows)} />
         <TotalsTable title="By vendor" rows={totalsByVendor(rows)} />
+        <TotalsTable title="By employee" rows={totalsByEmployee(rows)} />
       </div>
     </div>
   );

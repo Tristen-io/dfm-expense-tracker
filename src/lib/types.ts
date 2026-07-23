@@ -60,6 +60,14 @@ export type Vendor = {
   created_at: string;
 };
 
+// Same pattern as Vendor: admin-curated suggestions for the job/project
+// field, not a foreign key — expenses.job_name is always free text.
+export type Job = {
+  id: string;
+  name: string;
+  created_at: string;
+};
+
 export type Expense = {
   id: string;
   user_id: string;
@@ -79,6 +87,10 @@ export type Expense = {
   notes: string | null;
   receipt_path: string | null;
   status: ExpenseStatus;
+  // Who moved this entry to approved/flagged, and when — cleared back to
+  // null on reset to "pending". Denormalized name, same as employee_name.
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -91,6 +103,12 @@ export type ProfileInsert = {
 };
 
 export type VendorInsert = {
+  name: string;
+  id?: string;
+  created_at?: string;
+};
+
+export type JobInsert = {
   name: string;
   id?: string;
   created_at?: string;
@@ -111,6 +129,8 @@ export type ExpenseInsert = {
   notes?: string | null;
   receipt_path?: string | null;
   status?: ExpenseStatus;
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
   id?: string;
   created_at?: string;
   updated_at?: string;
@@ -129,6 +149,12 @@ export type Database = {
         Row: Vendor;
         Insert: VendorInsert;
         Update: Partial<Vendor>;
+        Relationships: [];
+      };
+      jobs: {
+        Row: Job;
+        Insert: JobInsert;
+        Update: Partial<Job>;
         Relationships: [];
       };
       expenses: {

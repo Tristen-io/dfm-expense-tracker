@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
     Amount: e.amount !== null ? e.amount.toFixed(2) : "",
     Notes: e.notes ?? "",
     Status: e.status,
+    "Reviewed By": e.reviewed_by_name ?? "",
+    "Reviewed At": e.reviewed_at ?? "",
     "Has Receipt": e.receipt_path ? "Yes" : "No",
     "Submitted At": e.created_at,
   }));

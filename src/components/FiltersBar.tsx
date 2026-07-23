@@ -1,4 +1,4 @@
-import type { Profile, Vendor } from "@/lib/types";
+import type { Job, Profile, Vendor } from "@/lib/types";
 import { EXPENSE_CATEGORIES } from "@/lib/types";
 
 export interface EntryFilters {
@@ -17,13 +17,16 @@ export interface EntryFilters {
 export default function FiltersBar({
   profiles,
   vendors,
+  jobs,
   filters,
 }: {
   profiles: Profile[];
   vendors: Vendor[];
+  jobs: Job[];
   filters: EntryFilters;
 }) {
   const vendorNames = vendors.map((v) => v.name);
+  const jobNames = jobs.map((j) => j.name);
 
   return (
     <form method="get" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
@@ -54,10 +57,16 @@ export default function FiltersBar({
           id="job"
           name="job"
           type="text"
+          list="filter-job-suggestions"
           defaultValue={filters.job ?? ""}
           placeholder="Search job…"
           className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-2 text-sm"
         />
+        <datalist id="filter-job-suggestions">
+          {jobNames.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
       </div>
 
       <div className="col-span-2 sm:col-span-1">

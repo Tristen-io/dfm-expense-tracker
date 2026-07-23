@@ -50,23 +50,46 @@ this size unless Supabase or Vercel change their free-tier terms.
   the invoice or delivery ticket arrives. An entry can't be approved (or
   exported) until it has an amount — enforced both in the UI and as a
   database constraint.
+- **Job / project** — same free-text-plus-suggestions pattern as vendor.
+  Admins manage a curated list at `/admin/jobs`; employees can still type a
+  job that isn't on the list without being blocked.
 - **My entries** (`/my-entries`) — an employee's own submissions and their
   review status. Entries can be edited/deleted only while still "pending."
 - **Admin — All entries** (`/admin/entries`) — every submission, filterable
-  by employee, job, vendor, category, status, and date range. Approve, flag,
-  or reset any entry.
+  by employee, job, vendor, category, status, and date range; paginated 25
+  at a time so the page stays fast as history builds up. Three "needs
+  attention" tiles at the top (Pending review / Flagged / Awaiting price)
+  jump straight to that filtered view, regardless of whatever filter is
+  currently applied — a running count of everything that needs a look.
+  Approve, flag, or reset any entry, or select several with the checkboxes
+  and approve them all at once (entries still awaiting a price are skipped).
+- **Review audit trail** — approving or flagging an entry stamps who did it
+  and when; that shows on the entry itself and is included in the CSV
+  export, so "who approved this and when" has a real answer for payroll
+  disputes.
 - **Admin — Vendors** (`/admin/vendors`) — add or remove the common vendors
   that show up as autocomplete suggestions on the submission form and
-  drive the "By vendor" report.
+  drive the "By vendor" report. Vendor (and job) names are matched
+  case-insensitively, so "ABC Supply" and "abc supply" can't both get added
+  and quietly split that vendor's spend across two rows in reports.
+- **Admin — Jobs** (`/admin/jobs`) — the same management screen, for the
+  job/project suggestion list.
 - **Admin — Reports** (`/admin/reports`) — totals by day, week, month,
-  job/project, and vendor for a selected date range and status.
+  job/project, vendor, and employee for a selected date range and status.
 - **CSV export** (`/admin/export`) — exports approved entries (respecting
-  the current filters), including the vendor, as a CSV for accounting/payroll.
-- **Auth** — Supabase email/password. New signups start as "employee";
-  promote an account to "admin" directly in Supabase (see below). Route
-  access is enforced both in `proxy.ts` (Next.js's replacement for
-  `middleware.ts` as of v16) and via Postgres Row Level Security, so even a
-  bug in the UI can't leak another employee's data.
+  the current filters), including vendor and who reviewed the entry, as a
+  CSV for accounting/payroll.
+- **Auth** — Supabase email/password, with a self-service "Forgot password"
+  flow (`/forgot-password` → emailed link → `/reset-password`) so a locked-out
+  employee doesn't need an admin to intervene. New signups start as
+  "employee"; promote an account to "admin" directly in Supabase (see
+  below). Route access is enforced both in `proxy.ts` (Next.js's
+  replacement for `middleware.ts` as of v16) and via Postgres Row Level
+  Security, so even a bug in the UI can't leak another employee's data.
+- **Receipt photo validation** — capped at 8MB and must actually be an
+  image, checked before it's uploaded, so a full-resolution phone photo
+  (or an accidental non-image file) can't eat into Supabase's free-tier
+  storage or clutter an entry with something unreadable.
 
 ## One-time setup
 
@@ -124,27 +147,48 @@ Repeat this for anyone else who should have admin access.
 That's the whole deployment — no servers to manage, no ongoing infrastructure
 cost at this scale.
 
+### 5. Let password-reset links work
+
+The "Forgot password?" link on the sign-in page sends an email with a link
+back to your site. Supabase only allows redirecting to URLs you've
+explicitly allowed, so:
+
+1. In the Supabase dashboard, go to **Authentication → URL Configuration**.
+2. Set **Site URL** to your live `*.vercel.app` URL (or custom domain).
+3. Under **Redirect URLs**, add `https://YOUR-DOMAIN/reset-password` (swap
+   in your actual domain). Adding `https://YOUR-DOMAIN/**` also works and
+   covers you if you add more auth pages later.
+4. Save. Test it end-to-end: sign out, click "Forgot password?", check the
+   email arrives, click the link, and confirm you land on a working "Set a
+   new password" form rather than an error.
+
+If you ever skip this step, the reset email still sends, but the link in
+it will fail — the fallback is always to reset the person's password
+manually in **Authentication → Users** in the Supabase dashboard.
+
 ## Project structure
 
 ```
 src/
   app/
     login/, signup/          — auth pages
+    forgot-password/, reset-password/ — self-service password reset
     submit/                  — employee expense submission form
     my-entries/              — employee's own entries
     admin/
-      entries/                — all entries + filters + approve/flag
+      entries/                — all entries + filters + dashboard tiles + pagination + bulk approve
       vendors/                 — admin-managed list of common vendors
-      reports/                 — totals by day/week/month/job/vendor
+      jobs/                     — admin-managed list of common jobs/projects
+      reports/                 — totals by day/week/month/job/vendor/employee
       export/route.ts          — CSV export (GET, streams a download)
     page.tsx                  — redirects to /submit or /admin/entries by role
   components/                 — ExpenseForm, EntriesTable, FiltersBar, etc.
   lib/
-    actions/                  — Server Actions (auth, expenses, receipts, vendors)
+    actions/                  — Server Actions (auth, expenses, receipts, vendors, jobs)
     supabase/                 — browser + server Supabase clients
     types.ts                  — shared domain types + the Database schema type
     queries.ts                — shared filtered-query builder (entries + export use the same logic)
-    reportUtils.ts             — day/week/month/job/vendor aggregation
+    reportUtils.ts             — day/week/month/job/vendor/employee aggregation
   proxy.ts                    — route protection + session refresh (Next.js 16's renamed "middleware")
 supabase/
   schema.sql                  — the entire database schema, RLS policies, and storage bucket setup
@@ -178,7 +222,20 @@ database columns exist, you'll see errors until both are in sync.
   (or a related table) and extend `ExpenseForm.tsx` / the admin views.
 - **Vendor detail (address, contact, account #)**: the `vendors` table
   currently only has a `name`. Add columns there and surface them on
-  `/admin/vendors`.
+  `/admin/vendors`. Same idea applies to `jobs`.
+- **Email notifications**: right now "needs attention" is surfaced via the
+  dashboard tiles on `/admin/entries`, which an admin has to actively check.
+  A real email/digest notification (e.g. "3 entries flagged this week")
+  would need an outbound email service (Resend, Postmark, etc. all have
+  free tiers) wired into a Server Action or a scheduled job — deliberately
+  left out for now to avoid adding another account/API key to manage.
+- **Full status-change history**: `expenses.reviewed_by_name` /
+  `reviewed_at` capture the *most recent* approve/flag, not a full history
+  of every status change. If you need the complete history (e.g. an entry
+  gets flagged, reset, then approved, and you want all three events), add
+  an `expense_status_history` table and insert a row from
+  `updateExpenseStatus` in `src/lib/actions/expenses.ts` instead of
+  overwriting the two columns on `expenses`.
 
 ## A note on the versions used
 

@@ -61,6 +61,11 @@ export function totalsByJob(expenses: Expense[]): TotalRow[] {
   return rows.sort((a, b) => b.total - a.total);
 }
 
+export function totalsByEmployee(expenses: Expense[]): TotalRow[] {
+  const rows = groupBy(expenses, (e) => ({ key: e.user_id, label: e.employee_name }));
+  return rows.sort((a, b) => b.total - a.total);
+}
+
 // Entries with no vendor recorded are grouped together under "No vendor
 // recorded" rather than dropped, so spend isn't silently excluded.
 export function totalsByVendor(expenses: Expense[]): TotalRow[] {

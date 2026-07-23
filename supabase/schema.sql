@@ -60,11 +60,36 @@ create trigger on_auth_user_created
 -- ============================================================
 create table if not exists public.vendors (
   id uuid primary key default gen_random_uuid(),
-  name text not null unique,
+  name text not null,
   created_at timestamptz not null default now()
 );
 
 create index if not exists vendors_name_idx on public.vendors (name);
+
+-- ============================================================
+-- JOBS  (admin-curated list, same pattern as vendors — suggestions on the
+-- expense form's job/project field and the grouping key for "spend by
+-- job" in Reports. expenses.job_name stays free text, not a foreign key,
+-- so an employee can always type a job that isn't on the list yet.)
+-- ============================================================
+create table if not exists public.jobs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists jobs_name_idx on public.jobs (name);
+
+-- Case-insensitive uniqueness for both curated lists — otherwise "ABC
+-- Supply" and "abc supply" could both get added and would split that
+-- vendor's/job's spend across two rows in reports. Named as expression
+-- indexes (not a plain UNIQUE column constraint) so casing differences are
+-- caught, not just exact duplicates. Drops any older plain-unique
+-- constraint from a prior version of this file first.
+alter table public.vendors drop constraint if exists vendors_name_key;
+create unique index if not exists vendors_name_lower_idx on public.vendors (lower(name));
+alter table public.jobs drop constraint if exists jobs_name_key;
+create unique index if not exists jobs_name_lower_idx on public.jobs (lower(name));
 
 -- ============================================================
 -- EXPENSES
@@ -97,6 +122,13 @@ alter table public.expenses add column if not exists mix_design text;
 -- as suggestions for consistent reporting, but an employee can still type a
 -- one-off vendor name that isn't on the list without being blocked.
 alter table public.expenses add column if not exists vendor text;
+
+-- Lightweight audit trail: who moved this entry to approved/flagged, and
+-- when. Denormalized (a name, not a foreign key) same as employee_name, so
+-- displaying it never needs a join. Cleared back to null when an entry is
+-- reset to 'pending' (see updateExpenseStatus in src/lib/actions/expenses.ts).
+alter table public.expenses add column if not exists reviewed_by_name text;
+alter table public.expenses add column if not exists reviewed_at timestamptz;
 
 -- Amount is nullable: a material order can be logged (with quantity/mix
 -- design) before the price is known, then confirmed later once the invoice
@@ -164,6 +196,7 @@ create trigger expenses_set_updated_at
 alter table public.profiles enable row level security;
 alter table public.expenses enable row level security;
 alter table public.vendors enable row level security;
+alter table public.jobs enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin" on public.profiles
@@ -207,6 +240,19 @@ create policy "vendors_insert_admin" on public.vendors
 
 drop policy if exists "vendors_delete_admin" on public.vendors;
 create policy "vendors_delete_admin" on public.vendors
+  for delete using (public.is_admin());
+
+-- Same read-for-everyone / write-for-admins pattern as vendors.
+drop policy if exists "jobs_select_authenticated" on public.jobs;
+create policy "jobs_select_authenticated" on public.jobs
+  for select using (auth.uid() is not null);
+
+drop policy if exists "jobs_insert_admin" on public.jobs;
+create policy "jobs_insert_admin" on public.jobs
+  for insert with check (public.is_admin());
+
+drop policy if exists "jobs_delete_admin" on public.jobs;
+create policy "jobs_delete_admin" on public.jobs
   for delete using (public.is_admin());
 
 -- ============================================================

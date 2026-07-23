@@ -28,6 +28,9 @@ export default function Navbar({ profile }: { profile: Profile }) {
                 <Link href="/admin/vendors" className="text-slate-600 hover:text-slate-900">
                   Vendors
                 </Link>
+                <Link href="/admin/jobs" className="text-slate-600 hover:text-slate-900">
+                  Jobs
+                </Link>
               </>
             )}
           </nav>

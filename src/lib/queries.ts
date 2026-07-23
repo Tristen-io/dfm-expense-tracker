@@ -4,11 +4,16 @@ import type { EntryFilters } from "@/components/FiltersBar";
 
 // Shared between the admin entries page and the CSV export route so both
 // apply identical filtering logic.
+//
+// `withCount: true` asks Postgres for the total matching row count alongside
+// the page of rows — used by the admin entries page to paginate. The CSV
+// export never sets this (it always wants every matching row, unpaginated).
 export function filteredExpensesQuery(
   supabase: SupabaseClient<Database>,
-  filters: EntryFilters
+  filters: EntryFilters,
+  opts?: { withCount?: boolean }
 ) {
-  let query = supabase.from("expenses").select("*");
+  let query = supabase.from("expenses").select("*", opts?.withCount ? { count: "exact" } : undefined);
 
   if (filters.employee) query = query.eq("user_id", filters.employee);
   if (filters.job) query = query.ilike("job_name", `%${filters.job}%`);

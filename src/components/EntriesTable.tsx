@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteExpense, updateExpenseAmount, updateExpenseStatus } from "@/lib/actions/expenses";
+import {
+  bulkApproveExpenses,
+  deleteExpense,
+  updateExpenseAmount,
+  updateExpenseStatus,
+} from "@/lib/actions/expenses";
 import { getReceiptSignedUrl } from "@/lib/actions/receipts";
 import StatusBadge from "@/components/StatusBadge";
 import type { Expense, ExpenseStatus } from "@/lib/types";
@@ -13,9 +18,19 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   timeZone: "UTC",
 });
+const dateTimeFmt = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 function formatDate(isoDate: string) {
   return dateFmt.format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+function formatDateTime(iso: string) {
+  return dateTimeFmt.format(new Date(iso));
 }
 
 export default function EntriesTable({
@@ -31,6 +46,9 @@ export default function EntriesTable({
   const [amountEditId, setAmountEditId] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
   const [amountError, setAmountError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   function handleStatus(id: string, status: ExpenseStatus) {
     setPendingId(id);
@@ -82,6 +100,37 @@ export default function EntriesTable({
     });
   }
 
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function handleBulkApprove() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkPending(true);
+    setBulkError(null);
+    startTransition(async () => {
+      try {
+        const { approved } = await bulkApproveExpenses(ids);
+        setSelected(new Set());
+        if (approved < ids.length) {
+          setBulkError(
+            `Approved ${approved} of ${ids.length} — the rest are still awaiting a price.`
+          );
+        }
+      } catch (err) {
+        setBulkError(err instanceof Error ? err.message : "Couldn't approve the selected entries.");
+      } finally {
+        setBulkPending(false);
+      }
+    });
+  }
+
   async function handleViewReceipt(path: string) {
     setReceiptErrors((prev) => ({ ...prev, [path]: "" }));
     const url = await getReceiptSignedUrl(path);
@@ -100,38 +149,103 @@ export default function EntriesTable({
     );
   }
 
-  return (
-    <ul className="space-y-3">
-      {expenses.map((expense) => {
-        const busy = isPending && pendingId === expense.id;
-        const canEmployeeManage = mode === "employee" && expense.status === "pending";
-        const canManageAmount = mode === "admin" || canEmployeeManage;
-        const awaitingPrice = expense.amount === null;
+  const selectableIds =
+    mode === "admin"
+      ? expenses.filter((e) => e.status !== "approved" && e.amount !== null).map((e) => e.id)
+      : [];
+  const allSelectableSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
 
-        return (
-          <li
-            key={expense.id}
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-base font-semibold text-slate-900">{expense.job_name}</p>
-                <p className="text-sm text-slate-500">
-                  {formatDate(expense.expense_date)} · {expense.category}
-                  {expense.material_type && <> ({expense.material_type})</>}
-                  {mode === "admin" && <> · {expense.employee_name}</>}
-                </p>
-                {expense.quantity !== null && (
-                  <p className="text-sm text-slate-500">
-                    {expense.quantity} {expense.quantity_unit}
-                    {expense.mix_design && <> · Mix: {expense.mix_design}</>}
-                  </p>
-                )}
-                {expense.vendor && (
-                  <p className="text-sm text-slate-500">Vendor: {expense.vendor}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
+  function toggleSelectAll() {
+    setSelected(allSelectableSelected ? new Set() : new Set(selectableIds));
+  }
+
+  return (
+    <div>
+      {mode === "admin" && selectableIds.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <label className="flex items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={allSelectableSelected}
+              onChange={toggleSelectAll}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Select all approvable
+          </label>
+          {selected.size > 0 && (
+            <>
+              <button
+                type="button"
+                disabled={bulkPending}
+                onClick={handleBulkApprove}
+                className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-50"
+              >
+                {bulkPending ? "Approving…" : `Approve ${selected.size} selected`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-sm text-slate-500 underline"
+              >
+                Clear selection
+              </button>
+            </>
+          )}
+          {bulkError && <span className="text-sm text-red-600">{bulkError}</span>}
+        </div>
+      )}
+
+      <ul className="space-y-3">
+        {expenses.map((expense) => {
+          const busy = isPending && pendingId === expense.id;
+          const canEmployeeManage = mode === "employee" && expense.status === "pending";
+          const canManageAmount = mode === "admin" || canEmployeeManage;
+          const awaitingPrice = expense.amount === null;
+          const selectable = mode === "admin" && expense.status !== "approved" && !awaitingPrice;
+
+          return (
+            <li
+              key={expense.id}
+              className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex items-start gap-3">
+                  {mode === "admin" && (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(expense.id)}
+                      disabled={!selectable}
+                      title={!selectable ? "Add an amount before this can be approved" : undefined}
+                      onChange={() => toggleSelected(expense.id)}
+                      className="mt-1.5 h-4 w-4 shrink-0 rounded border-slate-300 disabled:opacity-30"
+                    />
+                  )}
+                  <div>
+                    <p className="text-base font-semibold text-slate-900">{expense.job_name}</p>
+                    <p className="text-sm text-slate-500">
+                      {formatDate(expense.expense_date)} · {expense.category}
+                      {expense.material_type && <> ({expense.material_type})</>}
+                      {mode === "admin" && <> · {expense.employee_name}</>}
+                    </p>
+                    {expense.quantity !== null && (
+                      <p className="text-sm text-slate-500">
+                        {expense.quantity} {expense.quantity_unit}
+                        {expense.mix_design && <> · Mix: {expense.mix_design}</>}
+                      </p>
+                    )}
+                    {expense.vendor && (
+                      <p className="text-sm text-slate-500">Vendor: {expense.vendor}</p>
+                    )}
+                    {expense.reviewed_by_name && expense.reviewed_at && (
+                      <p className="text-xs text-slate-400">
+                        {expense.status === "approved" ? "Approved" : "Reviewed"} by{" "}
+                        {expense.reviewed_by_name} on {formatDateTime(expense.reviewed_at)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
                 {awaitingPrice ? (
                   <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
                     Awaiting price
@@ -250,6 +364,7 @@ export default function EntriesTable({
           </li>
         );
       })}
-    </ul>
+      </ul>
+    </div>
   );
 }
