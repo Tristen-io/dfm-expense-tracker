@@ -4,9 +4,11 @@ import { useRef, useState, useTransition } from "react";
 import {
   addMaintenanceRecord,
   createMaintenanceSchedule,
+  createMaintenanceSchedulesBulk,
   deleteMaintenanceSchedule,
 } from "@/lib/actions/maintenance";
 import { computeMaintenanceStatus } from "@/lib/maintenanceUtils";
+import { MAINTENANCE_PRESETS } from "@/lib/maintenancePresets";
 import MaintenanceStatusBadge from "@/components/MaintenanceStatusBadge";
 import type { MaintenanceRecord, MaintenanceSchedule, MaintenanceType, MeterType } from "@/lib/types";
 
@@ -194,6 +196,95 @@ function ScheduleRow({
   );
 }
 
+function QuickAddPresets({
+  assetId,
+  meterType,
+  alreadyTracked,
+}: {
+  assetId: string;
+  meterType: MeterType;
+  alreadyTracked: Set<string>;
+}) {
+  const presets = MAINTENANCE_PRESETS[meterType];
+  const available = presets.filter((p) => !alreadyTracked.has(p.name.toLowerCase()));
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  if (available.length === 0) return null;
+
+  function toggle(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function handleAdd() {
+    const picks = available.filter((p) => selected.has(p.name));
+    if (picks.length === 0) return;
+    setError(null);
+    setInfo(null);
+    startTransition(async () => {
+      const result = await createMaintenanceSchedulesBulk(assetId, picks);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setSelected(new Set());
+      if (result.added > 0) {
+        setInfo(`Added ${result.added} item${result.added === 1 ? "" : "s"} with default intervals.`);
+      }
+    });
+  }
+
+  return (
+    <div className="rounded-md bg-slate-50 p-3">
+      <p className="text-xs font-medium text-slate-600">
+        Common items — uses reasonable default intervals, edit anytime by removing and re-adding.
+      </p>
+      <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+        {available.map((p) => (
+          <label key={p.name} className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={selected.has(p.name)}
+              onChange={() => toggle(p.name)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            {p.name}
+            <span className="text-xs text-slate-400">
+              (every{" "}
+              {[
+                p.interval_meter
+                  ? `${p.interval_meter.toLocaleString()} ${meterType === "hours" ? "hrs" : "mi"}`
+                  : null,
+                p.interval_days ? `${p.interval_days} days` : null,
+              ]
+                .filter(Boolean)
+                .join(" / ")}
+              )
+            </span>
+          </label>
+        ))}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {info && <p className="mt-2 text-xs text-green-700">{info}</p>}
+      <button
+        type="button"
+        disabled={pending || selected.size === 0}
+        onClick={handleAdd}
+        className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+      >
+        {pending ? "Adding…" : `Add selected${selected.size > 0 ? ` (${selected.size})` : ""}`}
+      </button>
+    </div>
+  );
+}
+
 export default function MaintenanceSchedulePanel({
   assetId,
   meterType,
@@ -253,12 +344,18 @@ export default function MaintenanceSchedulePanel({
 
       {isAdmin && (
         <div className="mt-4 border-t border-slate-100 pt-3">
+          <QuickAddPresets
+            assetId={assetId}
+            meterType={meterType}
+            alreadyTracked={new Set(schedules.map((s) => s.maintenance_type.toLowerCase()))}
+          />
+
           <button
             type="button"
             onClick={() => setShowAddForm((v) => !v)}
-            className="text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
+            className="mt-3 text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900"
           >
-            {showAddForm ? "Cancel" : "+ Track a maintenance item"}
+            {showAddForm ? "Cancel" : "+ Track a custom item"}
           </button>
 
           {showAddForm && (

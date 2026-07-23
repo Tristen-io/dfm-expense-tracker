@@ -759,6 +759,36 @@ create table if not exists public.maintenance_types (
 create unique index if not exists maintenance_types_name_lower_idx
   on public.maintenance_types (lower(name));
 
+-- Seeds a starter list so the "track a maintenance item" suggestions
+-- aren't empty on a fresh install — matches the preset names in
+-- src/lib/maintenancePresets.ts (the union across mileage/hours/none
+-- meter types) so the checkbox quick-add always has a matching curated
+-- entry. Only fires when the table is completely empty: an "on conflict do
+-- nothing" per-row insert would re-add a type an admin deliberately
+-- deleted the next time this file changes and gets re-run (a delete
+-- leaves nothing to conflict with), which defeats the point of an
+-- admin-curated list. Gating on "table is empty" means this seed can only
+-- ever run once, on a genuinely fresh install.
+insert into public.maintenance_types (name)
+select v.name from (values
+  ('Oil change'),
+  ('Tire rotation'),
+  ('Tire inspection'),
+  ('Brake inspection'),
+  ('Brake/track inspection'),
+  ('Air filter'),
+  ('Transmission fluid'),
+  ('Coolant flush'),
+  ('Coolant check'),
+  ('Hydraulic fluid'),
+  ('Grease fittings'),
+  ('Battery check'),
+  ('Wiper blades'),
+  ('Lights & wiring check'),
+  ('Registration / inspection renewal')
+) as v(name)
+where not exists (select 1 from public.maintenance_types);
+
 -- MAINTENANCE SCHEDULES — one row per (asset, maintenance type) the crew
 -- wants tracked, e.g. "Truck 1 — Oil change every 5,000 mi or 6 months,
 -- whichever comes first." last_performed_date/meter are denormalized from

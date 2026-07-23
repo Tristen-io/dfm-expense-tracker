@@ -100,6 +100,63 @@ export async function createMaintenanceSchedule(
   return { error: null, success: true };
 }
 
+export interface BulkScheduleResult {
+  error: string | null;
+  added: number;
+  skipped: string[];
+}
+
+// Powers the "+ Track common items" checkbox picker — creates several
+// schedules from the preset list (src/lib/maintenancePresets.ts) in one
+// submission instead of one form round-trip per item. Presets already
+// tracked for this asset are silently skipped rather than erroring the
+// whole batch (a plain multi-row insert would fail entirely on the first
+// duplicate, same all-or-nothing issue bulkApproveExpenses works around),
+// so re-checking an already-tracked item is harmless.
+export async function createMaintenanceSchedulesBulk(
+  assetId: string,
+  selections: { name: string; interval_days: number | null; interval_meter: number | null }[]
+): Promise<BulkScheduleResult> {
+  if (selections.length === 0) return { error: null, added: 0, skipped: [] };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "You must be signed in.", added: 0, skipped: [] };
+
+  const { data: existing } = await supabase
+    .from("maintenance_schedules")
+    .select("maintenance_type")
+    .eq("asset_id", assetId);
+  const existingLower = new Set((existing ?? []).map((s) => s.maintenance_type.toLowerCase()));
+
+  const toInsert = selections.filter((s) => !existingLower.has(s.name.toLowerCase()));
+  const skipped = selections.filter((s) => existingLower.has(s.name.toLowerCase())).map((s) => s.name);
+
+  if (toInsert.length === 0) {
+    return { error: null, added: 0, skipped };
+  }
+
+  const { error, data } = await supabase
+    .from("maintenance_schedules")
+    .insert(
+      toInsert.map((s) => ({
+        asset_id: assetId,
+        maintenance_type: s.name,
+        interval_days: s.interval_days,
+        interval_meter: s.interval_meter,
+      }))
+    )
+    .select("id");
+
+  if (error) return { error: error.message, added: 0, skipped };
+
+  revalidatePath(`/fleet/assets/${assetId}`);
+  revalidatePath("/fleet/assets");
+  return { error: null, added: data?.length ?? 0, skipped };
+}
+
 export async function deleteMaintenanceSchedule(id: string, assetId: string) {
   const supabase = await createClient();
   const {
