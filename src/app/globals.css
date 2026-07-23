@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+/* This app only has a light theme — every screen uses hardcoded light
+   backgrounds (bg-white, bg-slate-50, etc). Forcing color-scheme: light
+   keeps text and native form controls (inputs, date pickers, dropdown
+   arrows) rendered in light colors even when the phone/browser is set to
+   dark mode — otherwise the browser renders near-white text on our white
+   input backgrounds, making it unreadable. */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -12,13 +19,6 @@
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
