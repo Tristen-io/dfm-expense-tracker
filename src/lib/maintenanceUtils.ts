@@ -1,4 +1,4 @@
-import type { MaintenanceSchedule } from "@/lib/types";
+import type { Asset, MaintenanceSchedule } from "@/lib/types";
 
 // Status is computed here, not stored — see MaintenanceSchedule in
 // types.ts. Each basis (calendar time, meter) is evaluated independently
@@ -67,4 +67,50 @@ export function worstMaintenanceStatus(
   return schedules
     .map((s) => computeMaintenanceStatus(s, currentMeterValue, today))
     .reduce((worst, s) => worseOf(worst, s), "unknown");
+}
+
+export type MaintenanceDueItem = {
+  schedule: MaintenanceSchedule;
+  assetId: string;
+  assetNumber: string;
+  assetName: string;
+  status: MaintenanceStatus;
+};
+
+const STATUS_SORT_RANK: Record<MaintenanceStatus, number> = {
+  overdue: 0,
+  due_soon: 1,
+  unknown: 2,
+  ok: 3,
+};
+
+// Flattens every tracked item across a set of assets into one status-
+// computed, worst-first list — shared by the /fleet dashboard's "Needs
+// attention" preview and the full /fleet/maintenance list so they can't
+// drift out of sync on what counts as "due."
+export function buildMaintenanceDueItems(
+  assets: Pick<Asset, "id" | "asset_number" | "name" | "current_meter_value">[],
+  schedules: MaintenanceSchedule[],
+  today: Date = new Date()
+): MaintenanceDueItem[] {
+  const assetsById = new Map(assets.map((a) => [a.id, a]));
+
+  return schedules
+    .map((schedule) => {
+      const asset = assetsById.get(schedule.asset_id);
+      if (!asset) return null;
+      return {
+        schedule,
+        assetId: asset.id,
+        assetNumber: asset.asset_number,
+        assetName: asset.name,
+        status: computeMaintenanceStatus(schedule, asset.current_meter_value, today),
+      };
+    })
+    .filter((item): item is MaintenanceDueItem => item !== null)
+    .sort((a, b) => {
+      const rankDiff = STATUS_SORT_RANK[a.status] - STATUS_SORT_RANK[b.status];
+      if (rankDiff !== 0) return rankDiff;
+      return a.schedule.maintenance_type.localeCompare(b.schedule.maintenance_type);
+    });
 }

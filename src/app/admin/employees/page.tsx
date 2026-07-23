@@ -25,9 +25,9 @@ export default async function EmployeesPage() {
               <div>
                 <p className="font-medium text-slate-900">
                   {p.full_name}
-                  {p.role === "admin" && (
+                  {(p.role === "admin" || p.role === "mechanic") && (
                     <span className="ml-1.5 rounded-full bg-slate-900 px-2 py-0.5 text-xs font-medium text-white">
-                      admin
+                      {p.role}
                     </span>
                   )}
                 </p>

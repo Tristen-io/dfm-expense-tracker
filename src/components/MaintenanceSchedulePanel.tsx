@@ -28,14 +28,14 @@ function ScheduleRow({
   records,
   currentMeterValue,
   meterType,
-  isAdmin,
+  isFleetStaff,
   assetId,
 }: {
   schedule: MaintenanceSchedule;
   records: MaintenanceRecord[];
   currentMeterValue: number | null;
   meterType: MeterType;
-  isAdmin: boolean;
+  isFleetStaff: boolean;
   assetId: string;
 }) {
   const [showLogForm, setShowLogForm] = useState(false);
@@ -118,7 +118,7 @@ function ScheduleRow({
             {showHistory ? "Hide" : "Show"} history ({records.length})
           </button>
         )}
-        {isAdmin && (
+        {isFleetStaff && (
           <button
             type="button"
             disabled={pending}
@@ -292,7 +292,7 @@ export default function MaintenanceSchedulePanel({
   schedules,
   recordsBySchedule,
   maintenanceTypes,
-  isAdmin,
+  isFleetStaff,
 }: {
   assetId: string;
   meterType: MeterType;
@@ -300,7 +300,7 @@ export default function MaintenanceSchedulePanel({
   schedules: MaintenanceSchedule[];
   recordsBySchedule: Record<string, MaintenanceRecord[]>;
   maintenanceTypes: MaintenanceType[];
-  isAdmin: boolean;
+  isFleetStaff: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -335,14 +335,14 @@ export default function MaintenanceSchedulePanel({
               records={recordsBySchedule[s.id] ?? []}
               currentMeterValue={currentMeterValue}
               meterType={meterType}
-              isAdmin={isAdmin}
+              isFleetStaff={isFleetStaff}
               assetId={assetId}
             />
           ))}
         </ul>
       )}
 
-      {isAdmin && (
+      {isFleetStaff && (
         <div className="mt-4 border-t border-slate-100 pt-3">
           <QuickAddPresets
             assetId={assetId}

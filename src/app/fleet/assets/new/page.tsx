@@ -7,11 +7,10 @@ import { createClient } from "@/lib/supabase/server";
 export default async function NewAssetPage() {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
-  // Fleet & Equipment itself isn't admin-only, but adding to the registry
-  // is — this route lives outside /admin so employees can still reach
-  // everything else under /fleet, so the check has to happen here rather
-  // than relying on admin/layout.tsx.
-  if (profile.role !== "admin") redirect("/fleet/assets");
+  // fleet/layout.tsx already keeps non-fleet-staff out of everything under
+  // /fleet; this is just the standard "check explicitly for a clean
+  // redirect" belt-and-suspenders used throughout this app.
+  if (profile.role !== "admin" && profile.role !== "mechanic") redirect("/fleet/assets");
 
   const supabase = await createClient();
   const [{ data: categories }, { data: profiles }] = await Promise.all([

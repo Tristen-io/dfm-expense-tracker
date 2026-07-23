@@ -4,7 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { setEmployeeRole, updateEmployeeContactInfo } from "@/lib/actions/profile";
 import { createWriteUp } from "@/lib/actions/writeUps";
 import { getCurrentProfile } from "@/lib/auth";
-import { WRITE_UP_CATEGORIES } from "@/lib/types";
+import { WRITE_UP_CATEGORIES, type Role } from "@/lib/types";
+
+const ROLE_LABELS: Record<Role, string> = {
+  employee: "Employee",
+  mechanic: "Mechanic",
+  admin: "Admin",
+};
 
 export default async function EmployeeDetailPage({
   params,
@@ -38,9 +44,10 @@ export default async function EmployeeDetailPage({
     await updateEmployeeContactInfo(id, phone, address);
   }
 
-  async function handleToggleRole() {
+  async function handleSetRole(formData: FormData) {
     "use server";
-    await setEmployeeRole(id, target.role === "admin" ? "employee" : "admin");
+    const role = String(formData.get("role") || "employee") as Role;
+    await setEmployeeRole(id, role);
   }
 
   async function handleAddWriteUp(formData: FormData) {
@@ -58,12 +65,27 @@ export default async function EmployeeDetailPage({
           <p className="mt-1 text-sm text-slate-500">{employee.email ?? "No email on file"}</p>
         </div>
         {viewer.id !== employee.id && (
-          <form action={handleToggleRole}>
+          <form action={handleSetRole} className="flex items-center gap-2">
+            <label htmlFor="role" className="text-sm font-medium text-slate-700">
+              Role
+            </label>
+            <select
+              id="role"
+              name="role"
+              defaultValue={employee.role}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+            >
+              {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                </option>
+              ))}
+            </select>
             <button
               type="submit"
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              {employee.role === "admin" ? "Remove admin access" : "Make admin"}
+              Update role
             </button>
           </form>
         )}

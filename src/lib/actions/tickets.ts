@@ -11,10 +11,11 @@ export interface TicketFormState {
 }
 
 // Anyone signed in can file a ticket against any asset — reporting a
-// problem shouldn't require admin access. 911-priority tickets fan out to
-// every admin via the notify_new_ticket() trigger in schema.sql; the app
-// never contacts emergency services itself (see the disclaimer on the
-// form) — this just gets the right people looking at it fast.
+// problem shouldn't require fleet-staff access. 911-priority tickets fan
+// out to every admin and mechanic via the notify_new_ticket() trigger in
+// schema.sql; the app never contacts emergency services itself (see the
+// disclaimer on the form) — this just gets the right people looking at it
+// fast.
 export async function createServiceTicket(
   _prevState: TicketFormState,
   formData: FormData
@@ -27,7 +28,7 @@ export async function createServiceTicket(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name")
+    .select("full_name, role")
     .eq("id", user.id)
     .single();
 
@@ -68,12 +69,20 @@ export async function createServiceTicket(
   revalidatePath("/fleet/tickets");
   revalidatePath("/fleet");
   revalidatePath(`/fleet/assets/${asset_id}`);
-  redirect(`/fleet/tickets/${data.id}`);
+  revalidatePath("/my-tickets");
+
+  // Fleet staff land on the ticket's full detail page (/fleet/tickets/*),
+  // same as always. Employees can't reach that page (it's inside the
+  // fleet-staff-only /fleet/* section) — send them to their own read-only
+  // tickets list instead.
+  const isFleetStaff = profile?.role === "admin" || profile?.role === "mechanic";
+  redirect(isFleetStaff ? `/fleet/tickets/${data.id}` : "/my-tickets");
 }
 
-// Admin-only (RLS also allows the reporter to edit their own ticket while
-// still "open", but changing status specifically is kept admin-only here —
-// same "role check for a clean error, RLS as the real gate" pattern as
+// Fleet-staff only (admin or mechanic — RLS also allows the reporter to
+// edit their own ticket while still "open", but changing status
+// specifically is kept fleet-staff-only here — same "role check for a
+// clean error, RLS as the real gate" pattern as
 // updateExpenseStatus/updateTimeOffStatus).
 export async function updateTicketStatus(id: string, status: TicketStatus) {
   const supabase = await createClient();
@@ -87,7 +96,9 @@ export async function updateTicketStatus(id: string, status: TicketStatus) {
     .select("role")
     .eq("id", user.id)
     .single();
-  if (profile?.role !== "admin") throw new Error("Only an admin can change a ticket's status.");
+  if (profile?.role !== "admin" && profile?.role !== "mechanic") {
+    throw new Error("Only an admin or mechanic can change a ticket's status.");
+  }
 
   const { data: ticket, error } = await supabase
     .from("service_tickets")
@@ -121,6 +132,9 @@ export async function acknowledgeTicket(id: string) {
   revalidatePath("/fleet");
 }
 
+// Fleet-staff only — ticket comments are for admins/mechanics coordinating
+// on a repair, not general employee visibility (RLS enforces the same
+// restriction; see ticket_comments_insert_fleet_staff in schema.sql).
 export async function addTicketComment(ticketId: string, body: string) {
   const trimmed = body.trim();
   if (!trimmed) throw new Error("Comment can't be empty.");
@@ -133,9 +147,12 @@ export async function addTicketComment(ticketId: string, body: string) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name")
+    .select("full_name, role")
     .eq("id", user.id)
     .single();
+  if (profile?.role !== "admin" && profile?.role !== "mechanic") {
+    throw new Error("Only an admin or mechanic can comment on a ticket.");
+  }
 
   const { error } = await supabase.from("ticket_comments").insert({
     ticket_id: ticketId,

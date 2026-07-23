@@ -3,10 +3,10 @@ import { addMaintenanceType, deleteMaintenanceType } from "@/lib/actions/mainten
 import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
-// Same list-management pattern as /admin/vendors and /admin/jobs. Lives
-// under /fleet rather than /admin since Fleet & Equipment isn't otherwise
-// admin-only — this one page within it is, guarded here rather than by a
-// role-gated layout.
+// Same list-management pattern as /admin/vendors and /admin/jobs. The
+// fleet/layout.tsx gate already keeps employees out of everything under
+// /fleet; this extra check is redundant with that but kept for symmetry
+// with how the rest of this file's sibling pages are written.
 export default async function MaintenanceTypesPage({
   searchParams,
 }: {
@@ -14,7 +14,7 @@ export default async function MaintenanceTypesPage({
 }) {
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
-  if (profile.role !== "admin") redirect("/fleet");
+  if (profile.role !== "admin" && profile.role !== "mechanic") redirect("/fleet");
 
   const resolvedParams = await searchParams;
   const errorParam = resolvedParams.error;
@@ -47,7 +47,7 @@ export default async function MaintenanceTypesPage({
       <h1 className="text-xl font-semibold text-slate-900">Maintenance types</h1>
       <p className="mt-1 text-sm text-slate-500">
         Types added here show up as suggestions when tracking a maintenance item on an asset.
-        Admins can still type a one-off type that isn&apos;t on this list.
+        Admins and mechanics can still type a one-off type that isn&apos;t on this list.
       </p>
 
       <form

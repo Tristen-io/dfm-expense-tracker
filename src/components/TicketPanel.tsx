@@ -17,12 +17,12 @@ const dateTimeFmt = new Intl.DateTimeFormat("en-US", {
 export default function TicketPanel({
   ticket,
   comments,
-  isAdmin,
+  isFleetStaff,
   canManageAsReporter,
 }: {
   ticket: ServiceTicket;
   comments: TicketComment[];
-  isAdmin: boolean;
+  isFleetStaff: boolean;
   canManageAsReporter: boolean;
 }) {
   const [pending, startTransition] = useTransition();
@@ -84,7 +84,7 @@ export default function TicketPanel({
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-slate-900">Status</h2>
-          {isAdmin ? (
+          {isFleetStaff ? (
             <select
               value={ticket.status}
               disabled={pending}
@@ -127,7 +127,7 @@ export default function TicketPanel({
 
         {error && <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
-        {(isAdmin || canManageAsReporter) && (
+        {(isFleetStaff || canManageAsReporter) && (
           <button
             type="button"
             disabled={pending}

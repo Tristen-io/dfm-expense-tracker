@@ -108,8 +108,8 @@ export default function TicketForm({
           <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
             If this is a life-threatening emergency, call 911 (or your local emergency services)
             directly — this app does not contact emergency services and submitting this form is
-            not a substitute for that call. This just gets it in front of every admin
-            immediately.
+            not a substitute for that call. This just gets it in front of every admin and
+            mechanic immediately.
           </p>
         )}
       </div>

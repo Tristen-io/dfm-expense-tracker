@@ -37,8 +37,9 @@ type ParsedAssetFields = {
 };
 
 // Shared by createAsset/updateAsset — pulls + validates the fields common to
-// both. Admin-only in both cases (also enforced by RLS: assets_insert_admin
-// / assets_update_admin), checked explicitly here for a clean error message.
+// both. Fleet-staff only (admin or mechanic) in both cases — also enforced
+// by RLS (assets_insert_admin / assets_update_admin, both now gated on
+// is_fleet_staff()); checked explicitly here for a clean error message.
 function parseAssetFields(
   formData: FormData
 ): { error: string } | { fields: ParsedAssetFields } {
@@ -194,11 +195,12 @@ export interface MeterReadingFormState {
   success?: boolean;
 }
 
-// Any signed-in user can log a routine reading. A backwards value requires
-// checking the "this is a correction" box, which only an admin can submit —
-// enforce_meter_reading_order() in schema.sql is the real gate; the role
-// check here just gives a clean error instead of a raw Postgres exception
-// for the common case of a non-admin trying to override.
+// Fleet-staff only (admin or mechanic) — logging equipment meters is fleet
+// info, same reasoning as asset writes. A backwards value additionally
+// requires checking the "this is a correction" box and a reason —
+// enforce_meter_reading_order() in schema.sql is the real gate for that
+// part; the role checks here just give a clean error instead of a raw
+// Postgres RLS/exception failure.
 export async function addMeterReading(
   _prevState: MeterReadingFormState,
   formData: FormData
@@ -215,6 +217,10 @@ export async function addMeterReading(
     .eq("id", user.id)
     .single();
 
+  if (profile?.role !== "admin" && profile?.role !== "mechanic") {
+    return { error: "Only an admin or mechanic can log a meter reading." };
+  }
+
   const asset_id = String(formData.get("asset_id") || "");
   const reading_type = String(formData.get("reading_type") || "");
   const valueRaw = String(formData.get("value") || "").trim();
@@ -229,13 +235,8 @@ export async function addMeterReading(
   const value = Number(valueRaw);
   if (Number.isNaN(value) || value < 0) return { error: "Enter a valid, non-negative reading." };
 
-  if (is_override) {
-    if (profile?.role !== "admin") {
-      return { error: "Only an admin can override a backwards reading." };
-    }
-    if (!override_reason) {
-      return { error: "Enter a reason for the override." };
-    }
+  if (is_override && !override_reason) {
+    return { error: "Enter a reason for the override." };
   }
 
   const { error } = await supabase.from("meter_readings").insert({
@@ -261,7 +262,7 @@ export async function addMeterReading(
   return { error: null, success: true };
 }
 
-// Admin-only. The file itself is uploaded client-side straight to the
+// Fleet-staff only. The file itself is uploaded client-side straight to the
 // "asset-photos" bucket (see AssetPhotoUpload) — this just persists the
 // resulting storage path, same split as receipt uploads on expenses.
 export async function setAssetPhoto(assetId: string, photoPath: string) {

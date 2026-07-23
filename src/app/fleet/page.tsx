@@ -1,5 +1,7 @@
 import Link from "next/link";
+import MaintenanceDueList from "@/components/MaintenanceDueList";
 import TicketList from "@/components/TicketList";
+import { buildMaintenanceDueItems } from "@/lib/maintenanceUtils";
 import { getCurrentProfile } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -13,6 +15,8 @@ export default async function FleetDashboard() {
     { count: openTickets },
     { data: unacknowledged911 },
     { data: recentTickets },
+    { data: maintenanceAssets },
+    { data: maintenanceSchedules },
   ] = await Promise.all([
     supabase.from("assets").select("*", { count: "exact", head: true }),
     supabase
@@ -34,7 +38,14 @@ export default async function FleetDashboard() {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase.from("assets").select("id, asset_number, name, current_meter_value"),
+    supabase.from("maintenance_schedules").select("*"),
   ]);
+
+  const maintenanceDueItems = buildMaintenanceDueItems(
+    maintenanceAssets ?? [],
+    maintenanceSchedules ?? []
+  ).filter((i) => i.status === "overdue" || i.status === "due_soon");
 
   return (
     <div>
@@ -63,7 +74,7 @@ export default async function FleetDashboard() {
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Link
           href="/fleet/assets"
           className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm hover:border-slate-300"
@@ -85,6 +96,28 @@ export default async function FleetDashboard() {
           <p className="text-xs font-medium text-slate-500">Open tickets</p>
           <p className="mt-1 text-xl font-semibold text-slate-900">{openTickets ?? 0}</p>
         </Link>
+        <Link
+          href="/fleet/maintenance"
+          className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm hover:border-slate-300"
+        >
+          <p className="text-xs font-medium text-slate-500">Needs maintenance</p>
+          <p className="mt-1 text-xl font-semibold text-slate-900">{maintenanceDueItems.length}</p>
+        </Link>
+      </div>
+
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="text-base font-semibold text-slate-900">Needs maintenance</h2>
+        {maintenanceDueItems.length > 0 && (
+          <Link href="/fleet/maintenance" className="text-sm text-slate-500 underline underline-offset-2">
+            View all
+          </Link>
+        )}
+      </div>
+      <div className="mt-3">
+        <MaintenanceDueList
+          items={maintenanceDueItems.slice(0, 10)}
+          emptyMessage="Nothing overdue or due soon — you're all caught up."
+        />
       </div>
 
       <h2 className="mt-8 text-base font-semibold text-slate-900">Recent tickets</h2>

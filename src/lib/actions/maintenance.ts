@@ -41,7 +41,8 @@ export interface MaintenanceScheduleFormState {
   success?: boolean;
 }
 
-// Admin-only (also enforced by RLS: maintenance_schedules_insert_admin).
+// Fleet-staff only (also enforced by RLS: maintenance_schedules_insert_admin,
+// now gated on is_fleet_staff()).
 export async function createMaintenanceSchedule(
   assetId: string,
   _prevState: MaintenanceScheduleFormState,
@@ -176,9 +177,8 @@ export interface MaintenanceRecordFormState {
   success?: boolean;
 }
 
-// Any signed-in user can log that service was performed — the person who
-// actually did the oil change is often not an admin. See
-// maintenance_records_insert_authenticated in schema.sql.
+// Fleet-staff only (admin or mechanic) — see
+// maintenance_records_insert_fleet_staff in schema.sql.
 export async function addMaintenanceRecord(
   _prevState: MaintenanceRecordFormState,
   formData: FormData
@@ -191,9 +191,12 @@ export async function addMaintenanceRecord(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name")
+    .select("full_name, role")
     .eq("id", user.id)
     .single();
+  if (profile?.role !== "admin" && profile?.role !== "mechanic") {
+    return { error: "Only an admin or mechanic can log completed maintenance." };
+  }
 
   const schedule_id = String(formData.get("schedule_id") || "");
   const asset_id = String(formData.get("asset_id") || "");

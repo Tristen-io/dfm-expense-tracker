@@ -22,7 +22,10 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   const { id } = await params;
   const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
-  const isAdmin = profile.role === "admin";
+  // /fleet/* is already fleet-staff only (see fleet/layout.tsx), so this is
+  // always true in practice — kept explicit since the edit/read-only split
+  // below is keyed off it, and it reads clearer than a bare `true`.
+  const isFleetStaff = profile.role === "admin" || profile.role === "mechanic";
 
   const supabase = await createClient();
   const [{ data: asset }, { data: readings }, { data: tickets }, { data: schedules }, { data: maintenanceTypes }] =
@@ -51,7 +54,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
   let categories: { id: string; name: string; created_at: string }[] = [];
   let profiles: Profile[] = [];
-  if (isAdmin) {
+  if (isFleetStaff) {
     const [{ data: c }, { data: p }] = await Promise.all([
       supabase.from("asset_categories").select("*").order("name"),
       supabase.from("profiles").select("*").order("full_name"),
@@ -105,7 +108,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="space-y-6">
-          {isAdmin ? (
+          {isFleetStaff ? (
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold text-slate-900">Edit asset</h2>
               <div className="mt-3">
@@ -176,7 +179,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                   readingType={asset.meter_type}
                   currentValue={asset.current_meter_value}
                   readings={readings ?? []}
-                  isAdmin={isAdmin}
+                  isFleetStaff={isFleetStaff}
                 />
               </div>
             </div>
@@ -192,7 +195,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
                 schedules={schedules ?? []}
                 recordsBySchedule={recordsBySchedule}
                 maintenanceTypes={maintenanceTypes ?? []}
-                isAdmin={isAdmin}
+                isFleetStaff={isFleetStaff}
               />
             </div>
           </div>

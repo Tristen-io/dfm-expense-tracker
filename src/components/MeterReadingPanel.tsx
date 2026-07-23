@@ -17,13 +17,13 @@ export default function MeterReadingPanel({
   readingType,
   currentValue,
   readings,
-  isAdmin,
+  isFleetStaff,
 }: {
   assetId: string;
   readingType: MeterReadingType;
   currentValue: number | null;
   readings: MeterReading[];
-  isAdmin: boolean;
+  isFleetStaff: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -83,7 +83,7 @@ export default function MeterReadingPanel({
           </button>
         </div>
 
-        {isAdmin && (
+        {isFleetStaff && (
           <div>
             <label className="flex items-center gap-2 text-xs text-slate-600">
               <input

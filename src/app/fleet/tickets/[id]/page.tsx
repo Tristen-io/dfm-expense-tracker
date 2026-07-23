@@ -40,7 +40,9 @@ export default async function TicketDetailPage({
 
   if (!ticket) notFound();
 
-  const isAdmin = profile.role === "admin";
+  // /fleet/* is already fleet-staff only (see fleet/layout.tsx) — this is
+  // always true in practice, kept explicit for clarity in TicketPanel's props.
+  const isFleetStaff = profile.role === "admin" || profile.role === "mechanic";
   const canManageAsReporter = ticket.reported_by_id === profile.id && ticket.status === "open";
 
   return (
@@ -74,7 +76,7 @@ export default async function TicketDetailPage({
         <TicketPanel
           ticket={ticket}
           comments={comments ?? []}
-          isAdmin={isAdmin}
+          isFleetStaff={isFleetStaff}
           canManageAsReporter={canManageAsReporter}
         />
         <TicketStatusHistory entries={history ?? []} />

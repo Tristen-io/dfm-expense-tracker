@@ -27,6 +27,7 @@ function Divider() {
 // schema.sql), so this can't leak another user's data.
 export default async function Navbar({ profile }: { profile: Profile }) {
   const isAdmin = profile.role === "admin";
+  const isMechanic = profile.role === "mechanic";
 
   const supabase = await createClient();
   const { data: notifications } = await supabase
@@ -44,8 +45,8 @@ export default async function Navbar({ profile }: { profile: Profile }) {
           {isAdmin ? (
             // Admins have a lot more to reach (personal pages + review/admin
             // screens for each area), so it's grouped into dropdowns by
-            // area — expenses, time off, employee info — instead of one
-            // long flat row.
+            // area — expenses, time off, employee info, fleet & equipment —
+            // instead of one long flat row.
             <nav className="flex items-center gap-1 text-sm">
               <NavDropdown label="Expenses">
                 <NavLink href="/submit">New expense</NavLink>
@@ -71,14 +72,17 @@ export default async function Navbar({ profile }: { profile: Profile }) {
                 <NavLink href="/fleet/assets">Assets</NavLink>
                 <NavLink href="/fleet/assets/new">New asset</NavLink>
                 <Divider />
-                <NavLink href="/fleet/tickets">Service tickets</NavLink>
-                <Divider />
+                <NavLink href="/fleet/maintenance">Maintenance</NavLink>
                 <NavLink href="/fleet/maintenance-types">Maintenance types</NavLink>
+                <Divider />
+                <NavLink href="/fleet/tickets">Service tickets</NavLink>
               </NavDropdown>
             </nav>
-          ) : (
-            // Employees only ever see their own four pages — still short
-            // enough that a flat row is simpler than a dropdown.
+          ) : isMechanic ? (
+            // Mechanics have no HR/expense admin screens — just their own
+            // personal pages as a flat row, plus the exact same Fleet &
+            // Equipment dropdown an admin gets (full parity within fleet,
+            // nothing outside it).
             <nav className="flex items-center gap-4 text-sm">
               <Link href="/submit" className="text-slate-600 hover:text-slate-900">
                 New expense
@@ -92,9 +96,43 @@ export default async function Navbar({ profile }: { profile: Profile }) {
               <Link href="/profile" className="text-slate-600 hover:text-slate-900">
                 My profile
               </Link>
-              <Link href="/fleet" className="text-slate-600 hover:text-slate-900">
-                Fleet & Equipment
+              <NavDropdown label="Fleet & Equipment">
+                <NavLink href="/fleet">Dashboard</NavLink>
+                <NavLink href="/fleet/assets">Assets</NavLink>
+                <NavLink href="/fleet/assets/new">New asset</NavLink>
+                <Divider />
+                <NavLink href="/fleet/maintenance">Maintenance</NavLink>
+                <NavLink href="/fleet/maintenance-types">Maintenance types</NavLink>
+                <Divider />
+                <NavLink href="/fleet/tickets">Service tickets</NavLink>
+              </NavDropdown>
+            </nav>
+          ) : (
+            // Employees only ever see their own personal pages, plus a
+            // deliberately narrow Fleet & Equipment slice — report an
+            // issue, see their own reported tickets, and a read-only view
+            // of what maintenance is due. No dashboard, no asset registry,
+            // no editing — see /report-issue, /my-tickets, /maintenance-due
+            // and fleet/layout.tsx (which redirects employees out of
+            // /fleet/* entirely).
+            <nav className="flex items-center gap-4 text-sm">
+              <Link href="/submit" className="text-slate-600 hover:text-slate-900">
+                New expense
               </Link>
+              <Link href="/my-entries" className="text-slate-600 hover:text-slate-900">
+                My entries
+              </Link>
+              <Link href="/time-off" className="text-slate-600 hover:text-slate-900">
+                My time off
+              </Link>
+              <Link href="/profile" className="text-slate-600 hover:text-slate-900">
+                My profile
+              </Link>
+              <NavDropdown label="Fleet & Equipment">
+                <NavLink href="/report-issue">Report an issue</NavLink>
+                <NavLink href="/my-tickets">My tickets</NavLink>
+                <NavLink href="/maintenance-due">Maintenance due</NavLink>
+              </NavDropdown>
             </nav>
           )}
         </div>
@@ -102,9 +140,9 @@ export default async function Navbar({ profile }: { profile: Profile }) {
           <NotificationBell notifications={notifications ?? []} />
           <span>
             {profile.full_name}
-            {isAdmin && (
+            {(isAdmin || isMechanic) && (
               <span className="ml-1.5 rounded-full bg-slate-900 px-2 py-0.5 text-xs font-medium text-white">
-                admin
+                {profile.role}
               </span>
             )}
           </span>
